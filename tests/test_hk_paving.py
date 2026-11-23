@@ -108,6 +108,24 @@ class HkPavingTest(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertFalse(relief.is_empty())
 
+    def test_short_path_crossing_marker_gets_a_dot_in_its_visible_run(self):
+        paths = [[(114.200954, 22.400974), (114.20098, 22.400974)]]
+        unclipped, = hk_paving._paving_centers(paths, BOUNDS, 1000, False)
+        clipped, = hk_paving._paving_centers(paths, BOUNDS, 1000, True)
+        corner_x = BOUNDS._span_meters()[0] - 3 * hk_paving.BORDER_WIDTH_MM - hk_paving.DOT_RADIUS_MM
+        self.assertGreater(unclipped[0], corner_x)
+        self.assertLess(clipped[0], corner_x)
+        self.assertEqual(clipped[1], unclipped[1])
+
+    def test_marker_clearance_splits_a_crossing_into_two_visible_runs(self):
+        margin = hk_paving.BORDER_WIDTH_MM + hk_paving.DOT_RADIUS_MM
+        corner = 3 * hk_paving.BORDER_WIDTH_MM + hk_paving.DOT_RADIUS_MM
+        runs = list(hk_paving._runs([(24, 27.9), (27.9, 24)], 30, 30, margin, corner))
+        self.assertEqual(len(runs), 2)
+        left, bottom = [next(hk_paving._dot_centers(run)) for run in runs]
+        self.assertLess(left[0], 30 - corner)
+        self.assertLess(bottom[1], 30 - corner)
+
     @unittest.skipUnless(os.environ.get("TOUCH_MAPPER_TEST_ENGINE") == "1", "requires the built Touch Mapper engine")
     def test_cli_opt_in_adds_attached_relief_and_handles_failure(self):
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"XDG_CACHE_HOME": root}):

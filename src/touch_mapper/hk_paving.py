@@ -103,37 +103,54 @@ def load_paths(bounds):
     return paths
 
 
-def _clip_segment(start, end, width, height, margin):
+def _clip_segment(start, end, lower, upper):
     low, high = 0.0, 1.0
-    for a, b, maximum in zip(start, end, (width, height)):
+    for a, b, minimum, maximum in zip(start, end, lower, upper):
         if a == b:
-            if not margin <= a <= maximum - margin:
+            if not minimum <= a <= maximum:
                 return None
             continue
-        enter, leave = sorted(((margin - a) / (b - a), (maximum - margin - a) / (b - a)))
+        enter, leave = sorted(((minimum - a) / (b - a), (maximum - a) / (b - a)))
         low, high = max(low, enter), min(high, leave)
         if low >= high:
             return None
-    first = start if low == 0 else _point_at(start, end, low)
-    last = end if high == 1 else _point_at(start, end, high)
-    return first, last
+    return low, high
 
 
 def _point_at(start, end, fraction):
     return tuple(a + (b - a) * fraction for a, b in zip(start, end))
 
 
-def _runs(points, width, height, margin):
+def _visible_intervals(a, b, width, height, margin, corner_margin):
+    visible = _clip_segment(a, b, (margin, margin), (width - margin, height - margin))
+    if visible is None:
+        return ()
+    if corner_margin is None:
+        return (visible,)
+    blocked = _clip_segment(a, b, (width - corner_margin, height - corner_margin), (width, height))
+    if blocked is None:
+        return (visible,)
+    low, high = visible
+    hidden_low, hidden_high = blocked
+    return tuple((i, j) for i, j in ((low, min(high, hidden_low)), (max(low, hidden_high), high)) if i < j)
+
+
+def _runs(points, width, height, margin, corner_margin):
     run = []
     for a, b in zip(points, points[1:]):
-        clipped = _clip_segment(a, b, width, height, margin)
-        if run and (clipped is None or run[-1] != clipped[0]):
+        intervals = _visible_intervals(a, b, width, height, margin, corner_margin)
+        if run and not intervals:
             yield run
             run = []
-        if clipped is not None:
+        for low, high in intervals:
+            start = a if low == 0 else _point_at(a, b, low)
+            end = b if high == 1 else _point_at(a, b, high)
+            if run and run[-1] != start:
+                yield run
+                run = []
             if not run:
-                run.append(clipped[0])
-            run.append(clipped[1])
+                run.append(start)
+            run.append(end)
     if run:
         yield run
 
@@ -172,16 +189,14 @@ def _paving_centers(paths, bounds, scale, has_borders):
     lon_span = bounds.east - bounds.west
     y_span = mercator_y(bounds.north) - south
     margin = DOT_RADIUS_MM + (BORDER_WIDTH_MM if has_borders else 0)
-    corner_margin = 3 * BORDER_WIDTH_MM + DOT_RADIUS_MM
+    corner_margin = 3 * BORDER_WIDTH_MM + DOT_RADIUS_MM if has_borders else None
     for line in paths:
         points = [
             ((lon - bounds.west) / lon_span * width, (mercator_y(lat) - south) / y_span * height)
             for lon, lat in line
         ]
-        for run in _runs(points, width, height, margin):
-            for x, y in _dot_centers(run):
-                if not has_borders or x < width - corner_margin or y < height - corner_margin:
-                    yield x, y
+        for run in _runs(points, width, height, margin, corner_margin):
+            yield from _dot_centers(run)
 
 
 def _build_relief(candidates, rest, ways):
