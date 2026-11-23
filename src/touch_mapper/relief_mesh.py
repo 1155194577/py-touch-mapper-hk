@@ -9,7 +9,8 @@ import shapely as sh
 XY_STEP = 2 ** -11
 Z_STEP = 2 ** -15
 SEAM_STEP = 8 * XY_STEP
-MAX_Z_CORRECTION = 0.01
+# Bound the vertical adjustment when welding intersecting wall edges.
+MAX_Z_CORRECTION = 0.025
 
 
 def _planes(xy, z):
