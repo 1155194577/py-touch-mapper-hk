@@ -3,8 +3,8 @@
 A Python CLI for making tactile maps from OpenStreetMap. It runs the original
 [Touch Mapper](https://github.com/skarkkai/touch-mapper) converter locally: OSM2World
 builds the geometry, the clipper trims it to the print area, and Blender applies
-the tactile relief. A final STL step fuses the relief to the base without
-remeshing the map. The map description is generated from the same features.
+the tactile relief. A final STL step closes local seams and fuses the relief to
+the base without remeshing the map. The map description uses the same features.
 There is no website, AWS account, or API key to configure.
 
 ## Quick start (Docker)
@@ -94,10 +94,16 @@ if the server rejects the request. For API use you can set
 On success, the CLI also prints the manifest as JSON to stdout; progress and
 errors go to stderr. Keep [OpenStreetMap attribution](https://www.openstreetmap.org/copyright)
 with maps you share. The CLI resolves overlaps between the split parts and
-checks the STL geometry before publishing any files. It fails rather than saving
-a broken mesh or silently deleting tactile features. Check bed fit, relief
-and layer preview in your slicer: printer profiles, minimum feature size and
-G-code are outside the CLI.
+checks the STL geometry before publishing any files. It can close small
+converter seams, extend relief feet that nearly touch the base, and remove
+sub-printable fragments left by the solid operations. If the fused Blender
+mesh cannot be safely exported at STL precision, the CLI overlays the
+original relief facets in XY and rebuilds the full and split solids from those
+planes. It does not rasterize the relief or disable feature classes.
+Sub-micron XY rounding and small adjustments at seams are possible. Each STL
+is still checked for crossing surfaces before publication. Check bed fit,
+relief and layer preview in your slicer: printer profiles, minimum feature size
+and G-code are outside the CLI.
 
 ## Agent skill
 
@@ -113,5 +119,8 @@ installation. To include real artifact generation, also set
 The GitHub workflow runs both against the Docker image with networking disabled.
 
 The CLI is licensed under [AGPL-3.0-only](LICENSE), like Touch Mapper.
+Seam repair uses [PyMeshFix 0.18.1](https://github.com/pyvista/pymeshfix/tree/v0.18.1)
+under its GPLv3 terms. Manifold3D is pinned because newer versions can
+change the volume and connectivity when reading dense binary STLs.
 OSM2World and Blender retain their own licenses. The offline fixture is from
 the pinned Touch Mapper revision.
