@@ -2,11 +2,12 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
-from manifold3d import Manifold, Mesh64
+from manifold3d import Manifold, Mesh64, OpType
 
-from touch_mapper.print_mesh import _join_relief, _load_shells, _mesh, _separate_facets, finalize_stls
+from touch_mapper.print_mesh import _export_facets, _join_relief, _load_shells, _mesh, _stl_facets, finalize_stls
 
 
 def raw_stl(path, *solids):
@@ -138,7 +139,7 @@ class PrintMeshTest(unittest.TestCase):
         self.assertAlmostEqual(full.bounding_box()[2], 0)
         self.assertAlmostEqual(full.bounding_box()[5], 2.6005, places=6)
 
-    def test_separates_vertices_that_coincide_in_float32(self):
+    def test_collapses_redundant_edge_vertex_without_moving_surface(self):
         cube = Manifold.cube((10, 10, 1)).translate((180, 0, 0))
         mesh = cube.to_mesh64()
         vertices = mesh.vert_properties
@@ -156,9 +157,49 @@ class PrintMeshTest(unittest.TestCase):
                 faces.append(face)
         indexed = Mesh64(np.vstack([vertices, extra]), np.array(faces, dtype=np.uint64))
 
-        facets = _separate_facets("map.stl", indexed, cube.volume(), single_piece=True)
+        facets = _export_facets("map.stl", Manifold(indexed), single_piece=True)
 
         restored = _mesh(facets["vertices"], "map.stl")
         self.assertEqual(restored.bounding_box()[2], 0)
         self.assertEqual(len(restored.decompose()), 1)
-        self.assertAlmostEqual(restored.volume(), cube.volume(), places=2)
+        self.assertAlmostEqual(restored.volume(), cube.volume())
+
+    def test_rejects_crossing_closed_surfaces_with_matching_volume(self):
+        cubes = (
+            Manifold.cube((2, 2, 2)),
+            Manifold.cube((2, 2, 2)).translate((1, 1, 1)),
+        )
+        points = np.concatenate([mesh.vert_properties[mesh.tri_verts] for mesh in (
+            cube.to_mesh64() for cube in cubes
+        )])
+        volume = sum(cube.volume() for cube in cubes)
+        self.assertAlmostEqual(_mesh(points, "map-ways.stl").volume(), volume)
+        with self.assertRaisesRegex(ValueError, "crossing faces"):
+            _stl_facets("map-ways.stl", points, volume, single_piece=False)
+
+    def test_rejects_opposing_walls_that_touch_after_rounding(self):
+        left = Manifold.cube((1, 2, 2)).translate((180, 0, 0))
+        right = Manifold.cube((1, 2, 2)).translate((181.000001, 1, 1))
+        self.assertGreater(right.bounding_box()[0], left.bounding_box()[3])
+        self.assertEqual(np.float32(right.bounding_box()[0]), np.float32(left.bounding_box()[3]))
+
+        with self.assertRaisesRegex(ValueError, "crossing faces"):
+            _export_facets("map-ways.stl", Manifold.compose([left, right]), single_piece=False)
+
+    def test_vector_repair_keeps_narrow_ways_and_separates_point_contacts(self):
+        plate = Manifold.cube((10, 10, 0.6))
+        building = Manifold.cube((2, 2, 2.5))
+        raw_stl(self.rest, plate, building.translate((2, 2, 0.59)), building.translate((4, 4, 0.59)))
+        raw_stl(self.ways, Manifold.cube((0.07, 6, 1.0)).translate((3, 1, 0.59)))
+        with patch("touch_mapper.print_mesh._solid_facets", side_effect=ValueError("unsafe STL")):
+            finalize_stls(self.directory, blender_relief=True)
+
+        full, = _load_shells(self.full)
+        rest, = _load_shells(self.rest)
+        ways = _load_shells(self.ways)
+        self.assertEqual(full.bounding_box()[2], 0)
+        self.assertAlmostEqual(full.bounding_box()[5], 3.09, delta=0.0001)
+        self.assertAlmostEqual(rest.volume(), 60 + 8 * (3.09 - 0.6), delta=0.002)
+        self.assertAlmostEqual(sum(part.volume() for part in ways), 0.07 * 4 * 0.99, delta=0.002)
+        combined = Manifold.batch_boolean([rest, *ways], OpType.Add)
+        self.assertAlmostEqual((combined - full).volume() + (full - combined).volume(), 0, delta=1e-4)

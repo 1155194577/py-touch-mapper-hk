@@ -119,7 +119,7 @@ def generate(runtime: Runtime, args):
             if not artifact.is_file() or not artifact.stat().st_size:
                 raise ValueError(f"converter did not produce {filename}")
         print("Preparing printable STL solids", file=sys.stderr, flush=True)
-        finalize_stls(work)
+        finalize_stls(work, blender_relief=True)
         runtime.describe(work)
         runtime.embossing_pdf(work)
 

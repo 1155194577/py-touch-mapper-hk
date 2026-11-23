@@ -96,10 +96,14 @@ errors go to stderr. Keep [OpenStreetMap attribution](https://www.openstreetmap.
 with maps you share. The CLI resolves overlaps between the split parts and
 checks the STL geometry before publishing any files. It can close small
 converter seams, extend relief feet that nearly touch the base, and remove
-sub-printable fragments left by the solid operations. It fails rather than
-saving an unrepaired mesh or switching to a lower-detail mode. Check bed fit, relief
-and layer preview in your slicer: printer profiles, minimum feature size and
-G-code are outside the CLI.
+sub-printable fragments left by the solid operations. If a dense Blender mesh
+cannot be safely fused or rounded to STL precision, the CLI overlays the
+original relief facets in XY and rebuilds the full and split solids from those
+planes. It does not rasterize the relief or disable feature classes.
+Sub-micron XY rounding and small adjustments at seams are possible. Each STL
+is still checked for crossing surfaces before publication. Check bed fit,
+relief and layer preview in your slicer: printer profiles, minimum feature size
+and G-code are outside the CLI.
 
 ## Agent skill
 

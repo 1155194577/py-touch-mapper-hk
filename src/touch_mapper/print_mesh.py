@@ -5,6 +5,9 @@ from pathlib import Path
 import numpy as np
 from manifold3d import Error, Manifold, Mesh64, OpType
 from pymeshfix import PyTMesh
+from shapely.errors import GEOSException
+
+from .relief_mesh import reconstruct_relief
 
 HEADER = struct.Struct("<80sI")
 FACET = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute", "<u2")])
@@ -63,8 +66,7 @@ def _repair_surface(path):
     return Manifold(Mesh64(vertices, faces.astype(np.uint64)))
 
 
-def _load_shells(path, repair=False):
-    repaired = False
+def _read_triangles(path):
     with path.open("rb") as stl:
         header = stl.read(HEADER.size)
         if len(header) != HEADER.size:
@@ -73,9 +75,14 @@ def _load_shells(path, repair=False):
         expected_size = HEADER.size + FACET.itemsize * count
         if path.stat().st_size != expected_size:
             raise _error(path.name, "invalid binary STL length")
-        if count == 0:
-            return []
-        triangles = np.fromfile(stl, dtype=FACET, count=count)["vertices"]
+        return np.fromfile(stl, dtype=FACET, count=count)["vertices"]
+
+
+def _load_shells(path, repair=False):
+    repaired = False
+    triangles = _read_triangles(path)
+    if not len(triangles):
+        return []
     try:
         solid = _mesh(triangles, path.name)
     except ValueError:
@@ -104,6 +111,7 @@ def _load_shells(path, repair=False):
 
 
 def _stl_facets(name, points, volume, single_piece):
+    points = points.astype(np.float32).astype(np.float64)
     normals = np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0])
     lengths = np.linalg.norm(normals, axis=1)
     if not len(points) or (lengths == 0).any():
@@ -119,56 +127,40 @@ def _stl_facets(name, points, volume, single_piece):
         raise _error(name, "relief is not attached to the base")
     if any(p.volume() == 0 for p in parts):
         raise _error(name, "STL export contains a shell with no enclosed volume")
+    # Manifold validates connectivity, but does not rule out crossing faces.
+    vertices, indices = np.unique(points.reshape(-1, 3), axis=0, return_inverse=True)
+    surface = PyTMesh()
+    surface.set_quiet(True)
+    surface.load_array(vertices, indices.reshape(-1, 3).astype(np.int32))
+    if surface.n_boundaries or surface.n_faces != len(facets):
+        raise _error(name, "solid did not survive STL precision")
+    if len(surface.select_intersecting_triangles()):
+        raise _error(name, "STL export has crossing faces")
     return facets
-
-
-def _separate_facets(name, mesh, volume, single_piece):
-    vertices = mesh.vert_properties.astype(np.float32)
-    faces = mesh.tri_verts.astype(np.intp)
-    points = vertices[faces].astype(np.float64)
-    normals = np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0])
-    _, inverse, counts = np.unique(vertices, axis=0, return_inverse=True, return_counts=True)
-    affected = np.union1d(faces[(normals == 0).all(axis=1)], np.flatnonzero(counts[inverse] > 1))
-    # Resolve float32 coincidences with repeatable, submicron offsets.
-    for step in (0.00005, 0.0001, 0.0002, 0.0005):
-        trial = vertices.copy()
-        delta = np.random.default_rng(0).uniform(-step, step, (len(affected), 3))
-        delta[vertices[affected, 2] == 0, 2] = 0
-        trial[affected] += delta
-        if single_piece:
-            trial[:, 2] = np.maximum(trial[:, 2], 0)
-        try:
-            return _stl_facets(name, trial[faces].astype(np.float64), volume, single_piece)
-        except ValueError:
-            pass
-    raise _error(name, "solid did not survive STL precision")
 
 
 def _export_facets(name, solid, single_piece):
     mesh = solid.to_mesh64()
-    vertices = mesh.vert_properties.astype(np.float32).astype(np.float64)
     volume = solid.volume()
     try:
-        return _stl_facets(name, vertices[mesh.tri_verts], volume, single_piece)
-    except ValueError:
-        pass
-    # Keep indices during repair so float32-collapsed edges can be stitched.
-    rounded = Manifold(Mesh64(vertices, np.array(mesh.tri_verts)))
-    if rounded.status() == Error.NoError and not rounded.is_empty():
+        return _stl_facets(name, mesh.vert_properties[mesh.tri_verts], volume, single_piece)
+    except ValueError as error:
+        # Keep indices during repair so float32-collapsed edges can be stitched.
+        vertices = mesh.vert_properties.astype(np.float32).astype(np.float64)
+        rounded = Manifold(Mesh64(vertices, np.array(mesh.tri_verts)))
+        if rounded.status() != Error.NoError or rounded.is_empty():
+            raise error
         indexed = rounded.to_mesh64()
-        vertices = indexed.vert_properties.astype(np.float32).astype(np.float64)
-        try:
-            return _stl_facets(name, vertices[indexed.tri_verts], volume, single_piece)
-        except ValueError:
-            pass
-    return _separate_facets(name, mesh, volume, single_piece)
+        return _stl_facets(name, indexed.vert_properties[indexed.tri_verts], volume, single_piece)
 
 
-def _write_stl(path, solid, single_piece=False):
+def _solid_facets(name, solid, single_piece=False):
     if solid.status() != Error.NoError or (single_piece and solid.is_empty()):
-        raise _error(path.name, "solid assembly failed")
-    facets = (np.zeros(0, dtype=FACET) if solid.is_empty()
-              else _export_facets(path.name, solid, single_piece))
+        raise _error(name, "solid assembly failed")
+    return np.zeros(0, dtype=FACET) if solid.is_empty() else _export_facets(name, solid, single_piece)
+
+
+def _write_stl(path, facets):
     with path.open("wb") as stl:
         stl.write(HEADER.pack(b"Touch Mapper printable STL (mm)", len(facets)))
         facets.tofile(stl)
@@ -226,7 +218,23 @@ def _join_relief(parts):
     return body, feet
 
 
-def finalize_stls(directory: Path):
+def _reconstructed_facets(paths, bottom):
+    try:
+        rest, ways = (_read_triangles(path) for path in paths[1:])
+        vertices, surfaces = reconstruct_relief(rest, ways, bottom)
+    except (ValueError, GEOSException) as exc:
+        raise _error(paths[0].name, str(exc)) from exc
+    for path, surface in zip(paths, surfaces):
+        if not len(surface) and path == paths[2]:
+            yield np.zeros(0, dtype=FACET)
+            continue
+        solid = Manifold(Mesh64(vertices, surface.astype(np.uint64)))
+        if solid.status() != Error.NoError:
+            raise _error(path.name, "invalid reconstructed relief")
+        yield _stl_facets(path.name, vertices[surface], solid.volume(), path == paths[0])
+
+
+def finalize_stls(directory: Path, *, blender_relief=False):
     rest_path, ways_path = (directory / name for name in ("map-rest.stl", "map-ways.stl"))
     rest = Manifold.batch_boolean(_load_shells(rest_path, repair=True), OpType.Add)
     ways = Manifold.batch_boolean(_load_shells(ways_path, repair=True), OpType.Add)
@@ -254,6 +262,16 @@ def finalize_stls(directory: Path):
         raise _error("map.stl", "the base is not on the build plane")
     offset = (0, 0, -bottom)
     # The split models share coordinates; the base and other relief keep priority.
-    _write_stl(directory / "map.stl", full.translate(offset), single_piece=True)
-    _write_stl(rest_path, rest.translate(offset))
-    _write_stl(ways_path, _without_slivers(ways - rest).translate(offset))
+    paths = (directory / "map.stl", rest_path, ways_path)
+    try:
+        facets = (
+            _solid_facets(paths[0].name, full.translate(offset), single_piece=True),
+            _solid_facets(rest_path.name, rest.translate(offset)),
+            _solid_facets(ways_path.name, _without_slivers(ways - rest).translate(offset)),
+        )
+    except ValueError:
+        if not blender_relief:
+            raise
+        facets = tuple(_reconstructed_facets(paths, bottom))
+    for path, data in zip(paths, facets):
+        _write_stl(path, data)
