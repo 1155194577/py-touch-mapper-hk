@@ -10,7 +10,7 @@ from xml.etree.ElementTree import ParseError
 
 from defusedxml.common import DefusedXmlException
 
-from . import hk_paving
+from . import hk_paving, hkstp
 from .osm import ATTRIBUTION, Bounds, copy_osm, fetch_osm, read_bounds
 from .print_mesh import finalize_stls
 from .runtime import Runtime
@@ -52,6 +52,13 @@ def parser():
     markers.add_argument("--hide-marker", action="store_true", help="omit the default center marker")
     for kind in ("road", "path", "building", "railway"):
         generate.add_argument(f"--{kind}-height-mm", type=number, help=f"override {kind} relief; 0 omits this category")
+    indoor = commands.add_parser("hkstp-floor", help="make a tactile STL of Green 18's ground floor from CSDI")
+    floor_source = indoor.add_mutually_exclusive_group(required=True)
+    floor_source.add_argument("--building", choices=(hkstp.BUILDING,))
+    floor_source.add_argument("--floor-id", choices=(hkstp.FLOOR_ID,))
+    indoor.add_argument("--floor", choices=(hkstp.FLOOR,), default=hkstp.FLOOR)
+    indoor.add_argument("--size-mm", type=number, default=190, help="longest print side in mm (120–250, default: 190)")
+    indoor.add_argument("-o", "--out-dir", type=Path, required=True, help="new directory for the floor map")
     return root
 
 
@@ -168,6 +175,11 @@ def generate(runtime: Runtime, args):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "hkstp-floor":
+            from .floor_mesh import generate_floor
+
+            print(json.dumps(generate_floor(args.out_dir, args.size_mm)))
+            return 0
         if args.command == "generate":
             validate(args)
         runtime_path = args.runtime or os.environ.get("TOUCH_MAPPER_RUNTIME")
