@@ -13,6 +13,10 @@ MAX_OSM_BYTES = 25 * 1024 * 1024
 ATTRIBUTION = "© OpenStreetMap contributors — https://www.openstreetmap.org/copyright"
 
 
+def mercator_y(lat):
+    return math.asinh(math.tan(math.radians(lat))) / (2 * math.pi)
+
+
 @dataclass(frozen=True)
 class Bounds:
     west: float
@@ -38,25 +42,28 @@ class Bounds:
     def centered(cls, lat, lon, width_cm, height_cm, scale):
         if not (-85 <= lat <= 85 and -180 <= lon <= 180):
             raise ValueError("center is outside ±85° latitude or ±180° longitude")
-        half_lat = height_cm * scale / 200 * 360 / EARTH_CIRCUMFERENCE_M
-        half_lon = width_cm * scale / 200 * 360 / (
-            EARTH_CIRCUMFERENCE_M * math.cos(math.radians(lat))
-        )
+        cos_lat = math.cos(math.radians(lat))
+        circumference = EARTH_CIRCUMFERENCE_M * cos_lat
+        # Invert the Mercator span with latitude bounds symmetric about the
+        # center, which OSM2World uses to set its projection scale.
+        height_m = height_cm * scale / 100
+        half_lat = math.degrees(math.asin(cos_lat * math.tanh(math.pi * height_m / circumference)))
+        half_lon = width_cm * scale / 200 * 360 / circumference
         return cls(lon - half_lon, lat - half_lat, lon + half_lon, lat + half_lat)
 
     def print_dimensions(self, scale):
         # Match OSM2World's latitude-adjusted Mercator projection.
-        def mercator_y(lat):
-            return math.asinh(math.tan(math.radians(lat))) / (2 * math.pi)
-
         meters = EARTH_CIRCUMFERENCE_M * math.cos(math.radians((self.south + self.north) / 2))
         width_cm = (self.east - self.west) * meters / 360 * 100 / scale
         height_cm = (mercator_y(self.north) - mercator_y(self.south)) * meters * 100 / scale
         return round(width_cm, 2), round(height_cm, 2)
 
     def marker(self, lat, lon):
+        if not (self.south < lat < self.north and self.west < lon < self.east):
+            raise ValueError("marker must be inside the map bounds")
         x = (lon - self.west) / (self.east - self.west)
-        y = (lat - self.south) / (self.north - self.south)
+        south_y = mercator_y(self.south)
+        y = (mercator_y(lat) - south_y) / (mercator_y(self.north) - south_y)
         if not (0.04 < x < 0.96 and 0.04 < y < 0.96):
             raise ValueError("marker must be at least 4% in from each map edge")
         return {"x": x, "y": y}

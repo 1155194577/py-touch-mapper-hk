@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import math
 import os
 import struct
 import subprocess
@@ -36,9 +37,27 @@ class OsmTest(unittest.TestCase):
     def test_center_dimensions_and_marker(self):
         bounds = Bounds.centered(60, 24, 18, 12, 3100)
         self.assertEqual(bounds.print_dimensions(3100), (18, 12))
-        self.assertEqual(bounds.marker(60, 24), {"x": 0.5, "y": 0.5})
+        self.assertEqual(bounds.marker(60, 24)["x"], 0.5)
+        self.assertAlmostEqual(bounds.marker(60, 24)["y"], 0.5, places=4)
+        with self.assertRaisesRegex(ValueError, "inside"):
+            bounds.marker(90, 24)
         with self.assertRaisesRegex(ValueError, "4%"):
-            bounds.marker(bounds.south, bounds.west)
+            bounds.marker(60, bounds.west + (bounds.east - bounds.west) * 0.01)
+
+    def test_tall_high_latitude_map_keeps_requested_print_height(self):
+        bounds = Bounds.centered(80, 0, 15, 99.9, 30_000)
+        self.assertEqual(bounds.print_dimensions(30_000), (15, 99.9))
+        self.assertAlmostEqual((bounds.north + bounds.south) / 2, 80)
+
+    def test_marker_uses_projected_latitude(self):
+        def projected(lat):
+            return math.log(math.tan(math.radians(45 + lat / 2)))
+
+        bounds = Bounds(0, 75, 1, 84)
+        marker = bounds.marker(79.5, 0.5)
+        expected = (projected(79.5) - projected(75)) / (projected(84) - projected(75))
+        self.assertAlmostEqual(marker["y"], expected)
+        self.assertLess(marker["y"], 0.5)
 
     def test_reject_reversed_and_nonfinite_bounds(self):
         for values in [(-70, 40, -71, 41), (170, 20, -170, 21), (0, 80, 1, 89), (0, 0, float("nan"), 1)]:
