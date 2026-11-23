@@ -204,12 +204,15 @@ class PrintMeshTest(unittest.TestCase):
         combined = Manifold.batch_boolean([rest, *ways], OpType.Add)
         self.assertAlmostEqual((combined - full).volume() + (full - combined).volume(), 0, delta=1e-4)
 
-    def test_vector_repair_preserves_the_corner_marker_overhang(self):
+    def test_vector_repair_preserves_marker_with_touching_and_overhanging_buildings(self):
         plate = Manifold.cube((10, 10, 0.6))
         cap = Manifold.cube((3.6, 3.6, 4.49 - 2.768)).translate((6.4, 6.4, 2.768))
         support = Manifold.cube((3.24, 3.24, 2.2)).translate((6.76, 6.76, 0.59))
-        raw_stl(self.rest, plate, cap, support)
-        raw_stl(self.ways)
+        touching = Manifold.cube((1, 1, 2.9)).translate((5.4, 5.4, 0.59))
+        overhanging = Manifold.cube((0.2, 1, 2.9)).translate((9.9, 4, 0.59))
+        tall_way = Manifold.cube((0.3, 1.2, 2.9)).translate((7.5, 6.1, 0.59))
+        raw_stl(self.rest, plate, cap, support, touching, overhanging)
+        raw_stl(self.ways, tall_way)
         first = True
 
         def fail_once(*args, **kwargs):
@@ -222,7 +225,17 @@ class PrintMeshTest(unittest.TestCase):
         with patch("touch_mapper.print_mesh._export_facets", side_effect=fail_once):
             finalize_stls(self.directory, blender_relief=True, has_borders=True)
         gap = Manifold.cube((0.1, 0.1, 0.1)).translate((6.5, 6.5, 1.5))
+        separated_edge = Manifold.cube((0.001, 0.001, 0.01)).translate((6.401, 6.401, 3.2))
         for path in (self.full, self.rest):
             solid, = _load_shells(path)
             self.assertTrue((solid ^ gap).is_empty())
+            self.assertTrue((solid ^ separated_edge).is_empty())
             self.assertAlmostEqual((solid ^ gap.translate((0, 0, 1.8))).volume(), gap.volume())
+            self.assertAlmostEqual(solid.bounding_box()[3], 10.1, delta=0.0003)
+            self.assertGreater((solid ^ touching).volume(), 2.89)
+        full, = _load_shells(self.full)
+        rest, = _load_shells(self.rest)
+        ways = Manifold.batch_boolean(_load_shells(self.ways), OpType.Add)
+        self.assertGreater(ways.volume(), 0)
+        self.assertAlmostEqual((rest ^ ways).volume(), 0)
+        self.assertAlmostEqual((rest + ways - full).volume() + (full - (rest + ways)).volume(), 0, delta=1e-5)

@@ -7,7 +7,7 @@ from manifold3d import Error, Manifold, Mesh64, OpType
 from pymeshfix import PyTMesh
 from shapely.errors import GEOSException
 
-from .relief_mesh import XY_STEP, Z_STEP, reconstruct_relief
+from .relief_mesh import SEAM_STEP, XY_STEP, Z_STEP, reconstruct_relief
 
 HEADER = struct.Struct("<80sI")
 FACET = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute", "<u2")])
@@ -224,7 +224,15 @@ def _join_relief(parts):
 def _split_corner_top(rest, bottom):
     # The pinned Blender engine exports the northeast marker cap as its own
     # cuboid, three border widths wide. It is not supported at every XY point.
-    xy = rest[:, :, :2].max(axis=(0, 1))
+    floor = rest[(abs(rest[:, :, 2]) < TOLERANCE_MM).all(axis=1)]
+    if not len(floor):
+        raise ValueError("cannot locate the map floor")
+    normals = np.cross(floor[:, 1] - floor[:, 0], floor[:, 2] - floor[:, 0])
+    floor = floor[normals[:, 2] < 0]
+    if not len(floor):
+        raise ValueError("cannot locate the map floor")
+    largest = np.argsort(normals[normals[:, 2] < 0, 2])[:2]
+    xy = floor[largest, :, :2].max(axis=(0, 1))
     offset = BASE_HEIGHT_MM - BASE_JOIN_MM
     low = np.r_[xy - CORNER_WIDTH_MM, offset + CORNER_BOTTOM_MM]
     high = np.r_[xy, offset + CORNER_TOP_MM]
@@ -245,6 +253,28 @@ def _split_corner_top(rest, bottom):
     return rest[~cap], marker
 
 
+def _roof_solids(paths, vertices, surfaces):
+    for slot, (path, surface) in enumerate(zip(paths, surfaces)):
+        if not len(surface) and slot == 2:
+            yield Manifold()
+            continue
+        solid = Manifold(Mesh64(vertices, surface.astype(np.uint64)))
+        if solid.status() != Error.NoError:
+            raise _error(path.name, "invalid reconstructed relief")
+        yield solid
+
+
+def _restore_marker(paths, solids, marker):
+    full, rest, ways = solids
+    return (
+        _solid_facets(paths[0].name, full + marker, single_piece=True),
+        _solid_facets(paths[1].name, rest + marker),
+        _solid_facets(paths[2].name, ways - marker)
+        if not ways.is_empty() and ways.bounding_box()[5] > marker.bounding_box()[2]
+        else None,
+    )
+
+
 def _reconstructed_facets(paths, bottom, has_borders):
     try:
         rest, ways = (_read_triangles(path) for path in paths[1:])
@@ -254,21 +284,25 @@ def _reconstructed_facets(paths, bottom, has_borders):
         vertices, surfaces = reconstruct_relief(rest, ways, bottom)
     except (ValueError, GEOSException) as exc:
         raise _error(paths[0].name, str(exc)) from exc
-    for slot, (path, surface) in enumerate(zip(paths, surfaces)):
-        if not len(surface) and path == paths[2]:
+    solids = tuple(_roof_solids(paths, vertices, surfaces))
+    restored = (None, None, None)
+    if marker is not None:
+        try:
+            restored = _restore_marker(paths, solids, marker)
+        except ValueError:
+            # A relief corner can touch the cap along a single vertical edge.
+            # Inset the interior sides, without moving the map's outside edges.
+            lo, hi = np.array(marker.bounding_box()).reshape(2, 3)
+            lo[:2] += SEAM_STEP
+            inset = Manifold.cube(hi - lo).translate(lo)
+            restored = _restore_marker(paths, solids, inset)
+    for slot, (path, surface, solid, facets) in enumerate(zip(paths, surfaces, solids, restored)):
+        if facets is not None:
+            yield facets
+        elif solid.is_empty() and slot == 2:
             yield np.zeros(0, dtype=FACET)
-            continue
-        solid = Manifold(Mesh64(vertices, surface.astype(np.uint64)))
-        if solid.status() != Error.NoError:
-            raise _error(path.name, "invalid reconstructed relief")
-        if marker is not None:
-            if slot < 2:
-                yield _solid_facets(path.name, solid + marker, slot == 0)
-                continue
-            if solid.bounding_box()[5] > marker.bounding_box()[2]:
-                yield _solid_facets(path.name, solid - marker)
-                continue
-        yield _stl_facets(path.name, vertices[surface], solid.volume(), slot == 0)
+        else:
+            yield _stl_facets(path.name, vertices[surface], solid.volume(), slot == 0)
 
 
 def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False):
