@@ -35,6 +35,38 @@ DATA.GOV.HK file even with `--osm`; do not add it for offline work.
 Check `hkTactilePaving.status` in the manifest before saying the layer is
 present, and pass along its source and attribution when included.
 
+## Site wayfinding: Chung Chi College by University MTR
+
+- **Select the routes and landmarks a reader needs.** The fixed plan uses an
+  irregular schematic outline: it keeps the station-facing approach, the loop
+  around Lake Ad Excellentiam and Lingnan Stadium, and branches to campus
+  buildings. It omits Exit B on the other side of the station and much of the
+  surrounding street detail. It smooths routes into broad tactile bands and
+  groups some adjoining buildings into one shape. Use a close `--bbox` (or
+  matching offline extract), keep `--content-mode normal`, and choose a
+  `--scale` that leaves useful separation and fits the bed. The CLI prints
+  a rectangle from OSM, not a hand-edited schematic.
+- **Keep routes and landmarks distinguishable by touch.** The plan contrasts
+  pale route bands with raised yellow landmark shapes; the lake is a crescent
+  and the running track a solid oval. The photo does not reliably distinguish
+  raised from recessed paths. Set `--road-height-mm`, `--path-height-mm` or
+  `--building-height-mm` to adjust their 3D relief. Mapped water gets a wave
+  texture; the CLI does not reproduce the board's solid stadium oval or
+  merge chosen footprints into landmark symbols.
+- **Start at the viewer and provide a key.** The board faces the reader
+  rather than putting north at the top; a north arrow and tactile north-line
+  explain the orientation. It numbers selected features and route exits
+  1–38, beginning with the bridge direction, architecture building and MTR
+  exits D/C/A. The numbers identify features, not steps of a walking route,
+  and link to a Chinese/English key with Braille. A red triangle marks “You
+  Are Here”; burgundy dots mark bus stops, green dots mark other tactile-plan
+  locations, and arrows name off-map destinations. Use `--marker LAT LON`
+  for the verified installation point, not the nearest exit or the map
+  center. The CLI gives a generic marker and a standard orientation cue; it
+  has no viewer-alignment flag, dedicated exit/stop/plan symbols, destination
+  arrows or numbered Braille key. Add those separately if requested and
+  verify legibility by touch.
+
 ## Commands
 
 ```sh
