@@ -75,6 +75,21 @@ class CampusLandmarkTest(unittest.TestCase):
         self.assertAlmostEqual(reception[1][1], 22.4236)
         self.assertEqual(skipped, {"restrictedOrUnknownAccess": 2, "notConfirmedGroundFloor": 1})
 
+    def test_reception_crop_uses_exterior_anchor_not_indoor_desk(self):
+        layers = snapshot()["layers"]
+        layers["gates"] = []
+        layers["landmarks"] = layers["landmarks"][:1]
+
+        anchor_crop = Bounds(114.207, 22.423, 114.209, 22.423625)
+        groups, skipped = hkstp_landmarks.select(layers, anchor_crop)
+        self.assertEqual(groups, {("B1", "reception"): [("Visitor Centre", (114.2083, 22.4236))]})
+        self.assertFalse(skipped)
+
+        desk_crop = Bounds(114.207, 22.423625, 114.209, 22.425)
+        groups, skipped = hkstp_landmarks.select(layers, desk_crop)
+        self.assertFalse(groups)
+        self.assertEqual(skipped, {"outsideMap": 1})
+
     def test_raised_numbers_clear_roads_and_building_overhangs_and_stay_attached(self):
         groups, _ = hkstp_landmarks.select(snapshot()["layers"], BOUNDS)
         width, height = (cm * 10 for cm in BOUNDS.print_dimensions(SCALE))

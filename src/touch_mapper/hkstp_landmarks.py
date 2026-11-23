@@ -90,15 +90,8 @@ def select(layers, bounds):
             geometry = make_valid(shape(floor["geometry"]))
             parts = tuple(_parts(geometry, "Polygon"))
             for point in _coordinates(shape(row["geometry"]), kind):
-                if not (bounds.west < point.x < bounds.east and bounds.south < point.y < bounds.north):
-                    skipped["outsideMap"] += 1
-                    continue
-                if kind == "entrance":
-                    if not any(part.exterior.distance(point) <= 0.00004 for part in parts):
-                        skipped["notNearBuildingExterior"] += 1
-                        continue
-                    anchor = point
-                else:
+                anchor = point
+                if kind == "reception":
                     if any(unit.covers(point) for unit in restricted[key]):
                         skipped["restrictedOrUnknownAccess"] += 1
                         continue
@@ -107,6 +100,12 @@ def select(layers, bounds):
                         skipped["outsideBuilding"] += 1
                         continue
                     anchor = nearest_points(min(edges, key=lambda edge: edge.distance(point)), point)[0]
+                if not (bounds.west < anchor.x < bounds.east and bounds.south < anchor.y < bounds.north):
+                    skipped["outsideMap"] += 1
+                    continue
+                if kind == "entrance" and not any(part.exterior.distance(point) <= 0.00004 for part in parts):
+                    skipped["notNearBuildingExterior"] += 1
+                    continue
                 groups[building_id, kind].append((building, (anchor.x, anchor.y)))
     return groups, skipped
 
