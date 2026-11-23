@@ -54,30 +54,40 @@ def _load_shells(path):
     return shells
 
 
+def _stl_facets(name, points, volume, single_piece):
+    normals = np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0])
+    lengths = np.linalg.norm(normals, axis=1)
+    if not len(points) or (lengths == 0).any():
+        raise _error(name, "solid did not survive STL precision")
+    facets = np.zeros(len(points), dtype=FACET)
+    facets["vertices"] = points
+    facets["normal"] = normals / lengths[:, None]
+    quantized = _mesh(facets["vertices"], name)
+    if quantized.is_empty() or not math.isclose(quantized.volume(), volume, rel_tol=0.001):
+        raise _error(name, "solid did not survive STL export")
+    if single_piece and len(quantized.decompose()) != 1:
+        raise _error(name, "relief is not attached to the base")
+    return facets
+
+
 def _write_stl(path, solid, single_piece=False):
     if solid.status() != Error.NoError or (single_piece and solid.is_empty()):
         raise _error(path.name, "solid assembly failed")
     facets = np.zeros(0, dtype=FACET)
     if not solid.is_empty():
         mesh = solid.to_mesh64()
-        # Round while faces still share vertex indices so collapsed edges can be stitched.
-        points = mesh.vert_properties.astype(np.float32).astype(np.float64)
-        rounded = Manifold(Mesh64(points, np.array(mesh.tri_verts)))
-        mesh = rounded.to_mesh64()
-        points = mesh.vert_properties[mesh.tri_verts]
-        normals = np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0])
-        lengths = np.linalg.norm(normals, axis=1)
-        if rounded.status() != Error.NoError or not len(points) or (lengths == 0).any():
-            raise _error(path.name, "solid did not survive STL precision")
-        facets = np.zeros(len(points), dtype=FACET)
-        facets["vertices"] = points
-        facets["normal"] = normals / lengths[:, None]
-
-        quantized = _mesh(facets["vertices"], path.name)
-        if quantized.is_empty() or not math.isclose(quantized.volume(), solid.volume(), rel_tol=0.001):
-            raise _error(path.name, "solid did not survive STL export")
-        if single_piece and len(quantized.decompose()) != 1:
-            raise _error(path.name, "relief is not attached to the base")
+        vertices = mesh.vert_properties.astype(np.float32).astype(np.float64)
+        volume = solid.volume()
+        try:
+            facets = _stl_facets(path.name, vertices[mesh.tri_verts], volume, single_piece)
+        except ValueError:
+            # Keep indices during repair so float32-collapsed edges can be stitched.
+            rounded = Manifold(Mesh64(vertices, np.array(mesh.tri_verts)))
+            if rounded.status() != Error.NoError:
+                raise
+            mesh = rounded.to_mesh64()
+            vertices = mesh.vert_properties.astype(np.float32).astype(np.float64)
+            facets = _stl_facets(path.name, vertices[mesh.tri_verts], volume, single_piece)
 
     with path.open("wb") as stl:
         stl.write(HEADER.pack(b"Touch Mapper printable STL (mm)", len(facets)))
