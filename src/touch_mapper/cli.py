@@ -4,11 +4,13 @@ import math
 import os
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from xml.etree.ElementTree import ParseError
 
 from defusedxml.common import DefusedXmlException
 
+from . import hk_paving
 from .osm import ATTRIBUTION, Bounds, copy_osm, fetch_osm, read_bounds
 from .print_mesh import finalize_stls
 from .runtime import Runtime
@@ -34,7 +36,7 @@ def parser():
         command.add_argument("--runtime", type=Path, help="upstream checkout (default: TOUCH_MAPPER_RUNTIME)")
         command.add_argument("-v", "--verbose", action="store_true", help="show converter logs")
     sources = generate.add_mutually_exclusive_group(required=True)
-    sources.add_argument("--osm", type=Path, metavar="FILE", help="local OSM 0.6 XML with bounds (offline)")
+    sources.add_argument("--osm", type=Path, metavar="FILE", help="local OSM 0.6 XML with bounds")
     sources.add_argument("--bbox", nargs=4, type=number, metavar=("WEST", "SOUTH", "EAST", "NORTH"))
     sources.add_argument("--center", nargs=2, type=number, metavar=("LAT", "LON"))
     generate.add_argument("-o", "--out-dir", required=True, type=Path, help="new directory for the finished map")
@@ -43,6 +45,7 @@ def parser():
     generate.add_argument("--height-cm", type=number, help="print height for --center (default: 17)")
     generate.add_argument("--content-mode", choices=MODES, default="normal")
     generate.add_argument("--road-density", type=number, help="major road retention, 1–100 (default: 10)")
+    generate.add_argument("--hk-tactile-paving", action="store_true", help="add Hong Kong tactile guide paths to STLs")
     generate.add_argument("--no-borders", action="store_true", help="omit the raised map borders")
     markers = generate.add_mutually_exclusive_group()
     markers.add_argument("--marker", nargs=2, type=number, metavar=("LAT", "LON"))
@@ -118,8 +121,15 @@ def generate(runtime: Runtime, args):
             artifact = work / filename
             if not artifact.is_file() or not artifact.stat().st_size:
                 raise ValueError(f"converter did not produce {filename}")
+        paths = build_paving = None
+        if args.hk_tactile_paving:
+            paths = hk_paving.load_paths(bounds)
+            if paths:
+                build_paving = partial(hk_paving.paving_relief, paths, bounds, args.scale, has_borders=not args.no_borders)
         print("Preparing printable STL solids", file=sys.stderr, flush=True)
-        finalize_stls(work, blender_relief=True, has_borders=not args.no_borders)
+        dot_count = finalize_stls(
+            work, blender_relief=True, has_borders=not args.no_borders, build_additional_relief=build_paving
+        )
         runtime.describe(work)
         runtime.embossing_pdf(work)
 
@@ -140,6 +150,14 @@ def generate(runtime: Runtime, args):
             "contentMode": args.content_mode,
             "attribution": ATTRIBUTION,
         }
+        if args.hk_tactile_paving:
+            status = "unavailable" if paths is None else "included" if dot_count else "no-data"
+            manifest["hkTactilePaving"] = {
+                "status": status,
+                "dotCount": dot_count,
+                "source": hk_paving.SOURCE,
+                "attribution": hk_paving.ATTRIBUTION,
+            }
         (result / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         if output.exists() or output.is_symlink():
             raise ValueError(f"output directory already exists: {output}")

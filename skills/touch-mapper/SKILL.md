@@ -29,6 +29,12 @@ description: Generate local, printable tactile street maps from a latitude/longi
    Ask the recipient to verify bed fit and layer preview in their slicer; an STL
    is not sliced or printer-ready G-code.
 
+For Hong Kong STL maps, use `--hk-tactile-paving` if the reader wants
+Transport Department guide paths as raised dots. This can download a
+DATA.GOV.HK file even with `--osm`; do not add it for offline work.
+Check `hkTactilePaving.status` in the manifest before saying the layer is
+present, and pass along its source and attribution when included.
+
 ## Commands
 
 ```sh
