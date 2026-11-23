@@ -4,6 +4,7 @@ import math
 import os
 import sys
 import tempfile
+from collections import Counter
 from functools import partial
 from pathlib import Path
 from xml.etree.ElementTree import ParseError
@@ -46,6 +47,7 @@ def parser():
     generate.add_argument("--content-mode", choices=MODES, default="normal")
     generate.add_argument("--road-density", type=number, help="major road retention, 1–100 (default: 10)")
     generate.add_argument("--hk-tactile-paving", action="store_true", help="add Hong Kong tactile guide paths to STLs")
+    generate.add_argument("--hkstp-landmarks", action="store_true", help="add numbered Science Park landmarks to STLs")
     generate.add_argument("--no-borders", action="store_true", help="omit the raised map borders")
     markers = generate.add_mutually_exclusive_group()
     markers.add_argument("--marker", nargs=2, type=number, metavar=("LAT", "LON"))
@@ -133,10 +135,33 @@ def generate(runtime: Runtime, args):
             paths = hk_paving.load_paths(bounds)
             if paths:
                 build_paving = partial(hk_paving.paving_relief, paths, bounds, args.scale, has_borders=not args.no_borders)
+        build_relief = build_paving
+        legend = None
+        if args.hkstp_landmarks:
+            from . import hkstp_landmarks
+
+            snapshot, source = None, "outside-campus"
+            groups, skipped = {}, Counter()
+            placed = []
+            if hkstp_landmarks.intersects_campus(bounds):
+                snapshot, source = hkstp.load_campus()
+                groups, skipped = hkstp_landmarks.select(snapshot["layers"], bounds)
+            if groups:
+                def build_relief(rest, ways):
+                    paving, dot_count = build_paving(rest, ways) if build_paving else (None, 0)
+                    occupied = rest + paving if dot_count else rest
+                    landmarks, items = hkstp_landmarks.build_relief(groups, bounds, args.scale, occupied, ways)
+                    placed.extend(items)
+                    combined = paving + landmarks if dot_count else landmarks
+                    return combined, dot_count + len(items)
+
         print("Preparing printable STL solids", file=sys.stderr, flush=True)
-        dot_count = finalize_stls(
-            work, blender_relief=True, has_borders=not args.no_borders, build_additional_relief=build_paving
+        relief_count = finalize_stls(
+            work, blender_relief=True, has_borders=not args.no_borders, build_additional_relief=build_relief
         )
+        if args.hkstp_landmarks:
+            landmarks_report = hkstp_landmarks.report(source, snapshot, groups, skipped, placed)
+            legend = hkstp_landmarks.legend(landmarks_report)
         runtime.describe(work)
         runtime.embossing_pdf(work)
 
@@ -158,6 +183,7 @@ def generate(runtime: Runtime, args):
             "attribution": ATTRIBUTION,
         }
         if args.hk_tactile_paving:
+            dot_count = relief_count - len(placed) if args.hkstp_landmarks else relief_count
             status = "unavailable" if paths is None else "included" if dot_count else "no-data"
             manifest["hkTactilePaving"] = {
                 "status": status,
@@ -165,6 +191,11 @@ def generate(runtime: Runtime, args):
                 "source": hk_paving.SOURCE,
                 "attribution": hk_paving.ATTRIBUTION,
             }
+        if legend is not None:
+            legend_file = "hkstp-landmarks.md"
+            (result / legend_file).write_text(legend, encoding="utf-8")
+            manifest["files"].append(legend_file)
+            manifest["hkstpLandmarks"] = landmarks_report
         (result / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         if output.exists() or output.is_symlink():
             raise ValueError(f"output directory already exists: {output}")
