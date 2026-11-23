@@ -108,6 +108,22 @@ class PrintMeshTest(unittest.TestCase):
         self.assertAlmostEqual(full.bounding_box()[5], 2.61, delta=0.0001)
         self.assertAlmostEqual(rest.volume() + sum(part.volume() for part in ways), full.volume(), places=4)
 
+    def test_roof_repair_counts_only_paving_dots_exposed_after_reconstruction(self):
+        base = Manifold.cube((20, 30, 0.6))
+        roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 3.47))
+        raw_stl(self.rest, base, roof)
+        raw_stl(self.ways)
+        dots = partial(_build_relief, [(6, 6), (12, 12)])
+
+        count = finalize_stls(
+            self.directory, blender_relief=True, blender_scale=2500, build_additional_relief=dots,
+        )
+
+        self.assertEqual(count, 1)
+        full, = _load_shells(self.full)
+        self.assertAlmostEqual(full.slice(3).area(), 12)
+        self.assertGreater(full.slice(2.5).area(), 12)
+
     def test_borderless_roof_repair_clips_attached_road_at_plate_edge(self):
         base = Manifold.cube((20, 30, 0.6))
         roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 3.47))
