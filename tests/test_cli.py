@@ -17,6 +17,7 @@ from defusedxml.common import DTDForbidden
 
 from touch_mapper.cli import ARTIFACTS, main
 from touch_mapper.osm import Bounds, copy_osm, fetch_osm, read_bounds
+from touch_mapper.print_mesh import _load_shells
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures/mixed.osm"
 
@@ -152,10 +153,10 @@ class CliTest(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("TOUCH_MAPPER_TEST_ENGINE") == "1", "requires the built Touch Mapper engine")
 class RealEngineTest(unittest.TestCase):
-    def render(self, input_path, output, *options):
+    def render(self, input_path, output, *options, scale=2100):
         process = subprocess.run(
             [sys.executable, "-m", "touch_mapper", "generate", "--osm", str(input_path),
-             "--scale", "2100", "--out-dir", str(output), *options],
+             "--scale", str(scale), "--out-dir", str(output), *options],
             text=True, capture_output=True, timeout=120,
         )
         self.assertEqual(process.returncode, 0, process.stderr)
@@ -168,10 +169,12 @@ class RealEngineTest(unittest.TestCase):
             self.assertEqual(json.loads((output / "manifest.json").read_text()), manifest)
             self.assertEqual({path.name for path in output.iterdir()}, set(ARTIFACTS) | {"manifest.json"})
             full = stl_vertices(output / "map.stl")
-            ways = stl_vertices(output / "map-ways.stl")
-            rest = stl_vertices(output / "map-rest.stl")
+            solid, = _load_shells(output / "map.stl")
+            ways = _load_shells(output / "map-ways.stl")
+            rest = _load_shells(output / "map-rest.stl")
             self.assertTrue(ways and rest)
-            self.assertCountEqual(full, ways + rest)
+            self.assertEqual(min(z for _, _, z in full), 0)
+            self.assertAlmostEqual(sum(part.volume() for part in ways + rest), solid.volume(), delta=0.1)
             for axis, key in enumerate(["printWidthCm", "printHeightCm"]):
                 span = max(vertex[axis] for vertex in full) - min(vertex[axis] for vertex in full)
                 self.assertAlmostEqual(span, manifest[key] * 10, delta=0.1)
@@ -197,3 +200,32 @@ class RealEngineTest(unittest.TestCase):
             self.assertNotIn("Library", json.dumps(filtered))
             self.assertIn("Main Street", json.dumps(filtered["A"]))
             self.assertEqual(filtered["metadata"]["printHeightsMm"]["buildings"], 0)
+
+    def test_big_roads_survive_binary_stl_precision(self):
+        fixture = Path(os.environ["TOUCH_MAPPER_RUNTIME"]) / "test/data/map.osm"
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "major roads"
+            self.render(fixture, output, "--content-mode", "only-big-roads", scale=1400)
+            self.assertEqual(len(_load_shells(output / "map.stl")), 1)
+            self.assertTrue(_load_shells(output / "map-ways.stl"))
+
+    def test_close_up_building_keeps_base_flat(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            osm = root / "building.osm"
+            osm.write_text("""<osm version="0.6">
+                <bounds minlat="60" minlon="24" maxlat="60.00004" maxlon="24.00008"/>
+                <node id="1" version="1" lat="60.00001" lon="24.00002"/>
+                <node id="2" version="1" lat="60.00001" lon="24.00006"/>
+                <node id="3" version="1" lat="60.00003" lon="24.00006"/>
+                <node id="4" version="1" lat="60.00003" lon="24.00002"/>
+                <way id="5" version="1">
+                    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="1"/>
+                    <tag k="building" v="yes"/>
+                </way>
+            </osm>""")
+            output = root / "close-up"
+            self.render(osm, output, "--no-borders", scale=40)
+            solid, = _load_shells(output / "map.stl")
+            self.assertEqual(solid.bounding_box()[2], 0)
+            self.assertGreater(solid.bounding_box()[5], 2.9)

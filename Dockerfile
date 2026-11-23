@@ -15,8 +15,9 @@ RUN git init -q . \
     && ant -f OSM2World/build.xml clean jar \
     && ln -s ../OSM2World converter/OSM2World
 
-RUN curl -fsSL --retry 3 -o /tmp/blender.tar.bz2 \
-    https://download.blender.org/release/Blender2.78/blender-2.78c-linux-glibc219-x86_64.tar.bz2 \
+RUN archive=Blender2.78/blender-2.78c-linux-glibc219-x86_64.tar.bz2 \
+    && { curl -fsSL --retry 3 -o /tmp/blender.tar.bz2 "https://download.blender.org/release/$archive" \
+      || curl -fsSL --retry 3 -o /tmp/blender.tar.bz2 "https://ftp.halifax.rwth-aachen.de/blender/release/$archive"; } \
     && echo '282f5ef2ae7a342ef20b9892a903bd18225c10c77335cdb58b4e88e3f0e71837  /tmp/blender.tar.bz2' | sha256sum -c - \
     && mkdir blender \
     && tar -xjf /tmp/blender.tar.bz2 --strip-components=1 -C blender \
