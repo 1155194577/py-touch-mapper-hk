@@ -71,6 +71,7 @@ touch-mapper generate --osm tests/fixtures/mixed.osm --scale 2100 --out-dir samp
 | `--width-cm`, `--height-cm` | With `--center`, set physical dimensions. Otherwise bounds and scale determine dimensions. |
 | `--content-mode` | Choose `normal`, `no-buildings`, `only-big-roads`, or `only-named-roads`. |
 | `--hk-tactile-paving` | Add Hong Kong Transport Department tactile guide paths to the STL models. Off by default. |
+| `--hkstp-landmarks` | Add raised, numbered Science Park entrances and reception buildings to the STL models. Off by default. |
 | `--marker LAT LON` / `--hide-marker` | Mark an interior point in the 3D model, or omit the default center marker. The marker must fit inside the print edges. |
 
 See `touch-mapper generate --help` for relief height overrides, border and
@@ -101,6 +102,30 @@ include the separate tactile warning-stripe dataset. The layer is STL-only;
 it does not change the SVG, PDF, Blender scene or map description. When
 requested, `manifest.json` reports whether it was included, had no data in
 the printable area, or was unavailable, and includes the source and attribution.
+
+### HKSTP Science Park campus landmarks
+
+```sh
+touch-mapper generate --bbox 114.2075 22.423 114.215 22.4293 --scale 3600 \
+  --content-mode only-big-roads --path-height-mm 0 --hide-marker --hkstp-landmarks -o science-park
+```
+
+The opt-in layer adds numbered rectangular entrance and round reception
+plaques to `map.stl` and `map-rest.stl`. Read the raised numerals north-up
+with `hkstp-landmarks.md`; the manifest lists the source, corresponding
+buildings, marker locations and skipped counts. The SVG, PDF, Blender scene
+and existing map description do not include these symbols.
+
+The CLI queries the public CSDI HKSTP layers and the Lands Department
+building-name layer only when requested for an area overlapping Science Park,
+even when the base is a local OSM file. It caches the campus data for seven
+days under `$XDG_CACHE_HOME/touch-mapper` (default `~/.cache/touch-mapper`).
+It groups principal gates and visitor services by named building and type,
+excludes restricted records, and places markers within 15 mm of their map
+anchor or omits them if no clear print space fits. The example suppresses
+small path relief to leave more room for the markers. Reception markers
+identify the building, not an outdoor desk. Confirm public access and routes
+with park staff.
 
 ### HKSTP Green 18 ground floor
 
