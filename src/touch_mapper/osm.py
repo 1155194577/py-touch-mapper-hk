@@ -11,6 +11,7 @@ OSM_API = "https://api.openstreetmap.org/api/0.6/map"
 OSM_MAX_AREA = 0.25
 MAX_OSM_BYTES = 25 * 1024 * 1024
 ATTRIBUTION = "© OpenStreetMap contributors — https://www.openstreetmap.org/copyright"
+MARKER_RADIUS_MM = 2.45  # Pinned upstream converter/tactile_constants.py.
 
 
 def mercator_y(lat):
@@ -51,14 +52,18 @@ class Bounds:
         half_lon = width_cm * scale / 200 * 360 / circumference
         return cls(lon - half_lon, lat - half_lat, lon + half_lon, lat + half_lat)
 
-    def print_dimensions(self, scale):
+    def _span_meters(self):
         # Match OSM2World's latitude-adjusted Mercator projection.
         meters = EARTH_CIRCUMFERENCE_M * math.cos(math.radians((self.south + self.north) / 2))
-        width_cm = (self.east - self.west) * meters / 360 * 100 / scale
-        height_cm = (mercator_y(self.north) - mercator_y(self.south)) * meters * 100 / scale
-        return round(width_cm, 2), round(height_cm, 2)
+        width = (self.east - self.west) * meters / 360
+        height = (mercator_y(self.north) - mercator_y(self.south)) * meters
+        return width, height
 
-    def marker(self, lat, lon):
+    def print_dimensions(self, scale):
+        width, height = self._span_meters()
+        return round(width * 100 / scale, 2), round(height * 100 / scale, 2)
+
+    def marker(self, lat, lon, scale):
         if not (self.south < lat < self.north and self.west < lon < self.east):
             raise ValueError("marker must be inside the map bounds")
         x = (lon - self.west) / (self.east - self.west)
@@ -66,6 +71,11 @@ class Bounds:
         y = (mercator_y(lat) - south_y) / (mercator_y(self.north) - south_y)
         if not (0.04 < x < 0.96 and 0.04 < y < 0.96):
             raise ValueError("marker must be at least 4% in from each map edge")
+        width, height = self._span_meters()
+        clearance_mm = min(min(x, 1 - x) * width, min(y, 1 - y) * height) * 1000 / scale
+        # Projected positions are snapped to millimetres before conversion to print units.
+        if clearance_mm <= MARKER_RADIUS_MM + 1 / scale:
+            raise ValueError(f"marker needs at least {MARKER_RADIUS_MM:g} mm of clearance from each print edge")
         return {"x": x, "y": y}
 
 

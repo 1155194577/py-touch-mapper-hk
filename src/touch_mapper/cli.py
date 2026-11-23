@@ -88,7 +88,7 @@ def stage_input(args, osm: Path):
             bounds = Bounds(*args.bbox)
             check_dimensions(bounds.print_dimensions(args.scale))
         if args.marker:
-            bounds.marker(*args.marker)
+            bounds.marker(*args.marker, args.scale)
         print("Downloading OpenStreetMap data", file=sys.stderr)
         fetch_osm(bounds, osm, os.environ.get("TOUCH_MAPPER_OSM_CONTACT"))
     return read_bounds(osm)
@@ -108,7 +108,7 @@ def generate(runtime: Runtime, args):
         dimensions = bounds.print_dimensions(args.scale)
         check_dimensions(dimensions)
         marker_point = None if args.hide_marker else args.marker or args.center
-        marker = json.dumps(bounds.marker(*marker_point)) if marker_point else None
+        marker = json.dumps(bounds.marker(*marker_point, args.scale)) if marker_point else None
         if args.content_mode in {"only-big-roads", "only-named-roads"}:
             runtime.prune(osm, bounds, dimensions, args)
         runtime.convert(osm, dimensions, marker, args)

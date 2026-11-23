@@ -37,12 +37,22 @@ class OsmTest(unittest.TestCase):
     def test_center_dimensions_and_marker(self):
         bounds = Bounds.centered(60, 24, 18, 12, 3100)
         self.assertEqual(bounds.print_dimensions(3100), (18, 12))
-        self.assertEqual(bounds.marker(60, 24)["x"], 0.5)
-        self.assertAlmostEqual(bounds.marker(60, 24)["y"], 0.5, places=4)
+        self.assertEqual(bounds.marker(60, 24, 3100)["x"], 0.5)
+        self.assertAlmostEqual(bounds.marker(60, 24, 3100)["y"], 0.5, places=4)
         with self.assertRaisesRegex(ValueError, "inside"):
-            bounds.marker(90, 24)
+            bounds.marker(90, 24, 3100)
         with self.assertRaisesRegex(ValueError, "4%"):
-            bounds.marker(60, bounds.west + (bounds.east - bounds.west) * 0.01)
+            bounds.marker(60, bounds.west + (bounds.east - bounds.west) * 0.01, 3100)
+
+    def test_marker_cannot_overhang_a_narrow_print(self):
+        bounds = Bounds.centered(0, 0, 1, 3, 3100)
+        near_west = bounds.west + (bounds.east - bounds.west) * 0.10
+        near_north = bounds.south + (bounds.north - bounds.south) * 0.93
+        with self.assertRaisesRegex(ValueError, "2.45 mm of clearance"):
+            bounds.marker(0, near_west, 3100)
+        with self.assertRaisesRegex(ValueError, "2.45 mm of clearance"):
+            bounds.marker(near_north, 0, 3100)
+        self.assertEqual(bounds.marker(0, 0, 3100), {"x": 0.5, "y": 0.5})
 
     def test_tall_high_latitude_map_keeps_requested_print_height(self):
         bounds = Bounds.centered(80, 0, 15, 99.9, 30_000)
@@ -54,7 +64,7 @@ class OsmTest(unittest.TestCase):
             return math.log(math.tan(math.radians(45 + lat / 2)))
 
         bounds = Bounds(0, 75, 1, 84)
-        marker = bounds.marker(79.5, 0.5)
+        marker = bounds.marker(79.5, 0.5, 3100)
         expected = (projected(79.5) - projected(75)) / (projected(84) - projected(75))
         self.assertAlmostEqual(marker["y"], expected)
         self.assertLess(marker["y"], 0.5)

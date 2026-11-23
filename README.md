@@ -69,7 +69,7 @@ touch-mapper generate --osm tests/fixtures/mixed.osm --scale 2100 --out-dir samp
 | `--scale N` | Set print scale 1:N (default 1:3100). For a fixed area, a larger N makes a smaller print. |
 | `--width-cm`, `--height-cm` | With `--center`, set physical dimensions. Otherwise bounds and scale determine dimensions. |
 | `--content-mode` | Choose `normal`, `no-buildings`, `only-big-roads`, or `only-named-roads`. |
-| `--marker LAT LON` / `--hide-marker` | Mark a point in the 3D model, or omit the default center marker. |
+| `--marker LAT LON` / `--hide-marker` | Mark an interior point in the 3D model, or omit the default center marker. The marker must fit inside the print edges. |
 
 See `touch-mapper generate --help` for relief height overrides, border and
 road density options. The map must be 1–99.9 cm on each axis. Bounds must not
