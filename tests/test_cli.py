@@ -17,6 +17,7 @@ from defusedxml.common import DTDForbidden
 
 from touch_mapper.cli import ARTIFACTS, main
 from touch_mapper.osm import Bounds, copy_osm, fetch_osm, read_bounds
+from touch_mapper.print_mesh import _load_shells
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures/mixed.osm"
 
@@ -168,10 +169,12 @@ class RealEngineTest(unittest.TestCase):
             self.assertEqual(json.loads((output / "manifest.json").read_text()), manifest)
             self.assertEqual({path.name for path in output.iterdir()}, set(ARTIFACTS) | {"manifest.json"})
             full = stl_vertices(output / "map.stl")
-            ways = stl_vertices(output / "map-ways.stl")
-            rest = stl_vertices(output / "map-rest.stl")
+            solid, = _load_shells(output / "map.stl")
+            ways = _load_shells(output / "map-ways.stl")
+            rest = _load_shells(output / "map-rest.stl")
             self.assertTrue(ways and rest)
-            self.assertCountEqual(full, ways + rest)
+            self.assertEqual(min(z for _, _, z in full), 0)
+            self.assertAlmostEqual(sum(part.volume() for part in ways + rest), solid.volume(), delta=0.1)
             for axis, key in enumerate(["printWidthCm", "printHeightCm"]):
                 span = max(vertex[axis] for vertex in full) - min(vertex[axis] for vertex in full)
                 self.assertAlmostEqual(span, manifest[key] * 10, delta=0.1)

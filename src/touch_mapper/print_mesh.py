@@ -7,7 +7,7 @@ from manifold3d import Error, Manifold, Mesh64, OpType
 
 HEADER = struct.Struct("<80sI")
 FACET = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute", "<u2")])
-# One micron is below FDM resolution and allows robust binary STL round-trips.
+# Allow for the upstream converter's floating-point origin.
 TOLERANCE_MM = 0.001
 
 
@@ -59,7 +59,7 @@ def _write_stl(path, solid, single_piece=False):
         raise _error(path.name, "solid assembly failed")
     facets = np.zeros(0, dtype=FACET)
     if not solid.is_empty():
-        mesh = solid.set_tolerance(TOLERANCE_MM).to_mesh64()
+        mesh = solid.to_mesh64()
         triangles = mesh.vert_properties[mesh.tri_verts].astype(np.float32)
         points = triangles.astype(np.float64)
         normals = np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0])
