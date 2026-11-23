@@ -149,7 +149,7 @@ def build_relief(groups, bounds, scale, rest, ways):
         )
 
     base = rest.slice(PLAQUE_BOTTOM_MM + 0.05)
-    occupied = rest.slice(BASE_HEIGHT_MM + 0.05) + ways.project()
+    occupied = rest.trim_by_plane((0, 0, 1), BASE_HEIGHT_MM + 0.05).project() + ways.project()
     clear = base - occupied
     placed = []
     solids = []

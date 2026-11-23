@@ -75,17 +75,21 @@ class CampusLandmarkTest(unittest.TestCase):
         self.assertAlmostEqual(reception[1][1], 22.4236)
         self.assertEqual(skipped, {"restrictedOrUnknownAccess": 2, "notConfirmedGroundFloor": 1})
 
-    def test_raised_numbers_are_shifted_off_roads_and_stay_attached(self):
+    def test_raised_numbers_clear_roads_and_building_overhangs_and_stay_attached(self):
         groups, _ = hkstp_landmarks.select(snapshot()["layers"], BOUNDS)
         width, height = (cm * 10 for cm in BOUNDS.print_dimensions(SCALE))
         base = Manifold.cube((width, height, 0.6))
         ways = Manifold.cube((6, 55, 1.2)).translate((width / 2 - 3, height / 2 - 28, 0.55))
-        overlay, placed = hkstp_landmarks.build_relief(groups, BOUNDS, SCALE, base, ways)
+        roof = Manifold.cube((8, 6, 0.75)).translate((width * 0.65 - 4, height * 0.3 - 3, 0.9))
+        footing = Manifold.cube((1, 1, 0.6)).translate((width * 0.65 + 2, height * 0.3 + 1, 0.55))
+        rest = base + roof + footing
+        overlay, placed = hkstp_landmarks.build_relief(groups, BOUNDS, SCALE, rest, ways)
         self.assertEqual([i["number"] for i in placed], [1, 2])
         self.assertGreater(placed[0]["shiftMm"], 0)
         self.assertTrue((overlay ^ ways).is_empty())
+        self.assertTrue((overlay ^ roof).is_empty())
         self.assertGreater(overlay.slice(2).area(), 0)
-        self.assertGreater(len(_solid_facets("map.stl", base + overlay + ways, single_piece=True)), 0)
+        self.assertGreater(len(_solid_facets("map.stl", rest + overlay + ways, single_piece=True)), 0)
 
     def test_generate_is_opt_in_and_writes_matching_legend_and_stl(self):
         with tempfile.TemporaryDirectory() as root, patch.object(hkstp, "load_campus") as fetch:
