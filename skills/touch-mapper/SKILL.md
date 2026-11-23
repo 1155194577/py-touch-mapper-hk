@@ -50,9 +50,10 @@ present, and pass along its source and attribution when included.
   pale route bands with raised yellow landmark shapes; the lake is a crescent
   and the running track a solid oval. The photo does not reliably distinguish
   raised from recessed paths. Set `--road-height-mm`, `--path-height-mm` or
-  `--building-height-mm` to adjust their 3D relief. Mapped water gets a wave
-  texture; the CLI does not reproduce the board's solid stadium oval or
-  merge chosen footprints into landmark symbols.
+  `--building-height-mm` to adjust their 3D relief. In STL, mapped water
+  areas get a wave texture; waterways do not. For SVG/PDF embossing, the
+  lake is a flat fill. The CLI does not reproduce the board's solid stadium
+  oval or merge chosen footprints into landmark symbols.
 - **Start at the viewer and provide a key.** The board faces the reader
   rather than putting north at the top; a north arrow and tactile north-line
   explain the orientation. It numbers selected features and route exits
@@ -61,11 +62,13 @@ present, and pass along its source and attribution when included.
   and link to a Chinese/English key with Braille. A red triangle marks “You
   Are Here”; burgundy dots mark bus stops, green dots mark other tactile-plan
   locations, and arrows name off-map destinations. Use `--marker LAT LON`
-  for the verified installation point, not the nearest exit or the map
-  center. The CLI gives a generic marker and a standard orientation cue; it
-  has no viewer-alignment flag, dedicated exit/stop/plan symbols, destination
-  arrows or numbered Braille key. Add those separately if requested and
-  verify legibility by touch.
+  to mark the verified installation point in the STL, not the nearest exit
+  or the map center. The engine exports the SVG before adding this marker,
+  so neither it nor the derived PDF has an installation-point marker.
+  The CLI provides a generic position marker in 3D and a standard
+  orientation cue; it has no viewer-alignment flag, dedicated exit/stop/plan
+  symbols, destination arrows or numbered Braille key. Add those separately
+  if requested and verify legibility by touch.
 
 ## Commands
 
