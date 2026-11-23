@@ -14,6 +14,7 @@ MAX_SEAM_SPAN_MM = 8
 # Match the pinned engine's base height and overlap in tactile_constants.py.
 BASE_HEIGHT_MM = 0.6
 BASE_JOIN_MM = 0.01
+MAX_MICRO_VOID_MM3 = 0.005
 
 
 def _error(name, reason):
@@ -181,8 +182,10 @@ def _trim_below_base(solid):
 
 def _is_sliver(component):
     x0, y0, z0, x1, y1, z1 = component.bounding_box()
-    return abs(component.volume()) <= 1e-6 or (
-        abs(component.volume()) < 0.06 and min(x1 - x0, y1 - y0, z1 - z0) < 0.03
+    volume = component.volume()
+    # Near-zero negative shells bound voids, not detached tactile material.
+    return -MAX_MICRO_VOID_MM3 <= volume <= 1e-6 or (
+        abs(volume) < 0.06 and min(x1 - x0, y1 - y0, z1 - z0) < 0.03
     )
 
 
@@ -202,7 +205,7 @@ def _join_relief(parts):
         if _is_sliver(part):
             continue
         x0, y0, bottom, x1, y1, top = part.bounding_box()
-        if (abs(bottom - base) > TOLERANCE_MM or top - bottom < BASE_JOIN_MM
+        if (part.volume() <= 0 or abs(bottom - base) > TOLERANCE_MM or top - bottom < BASE_JOIN_MM
                 or not (bx0 <= x0 <= x1 <= bx1 and by0 <= y0 <= y1 <= by1)):
             raise _error("map.stl", "relief is not attached to the base")
         # Extend the foot into the base without changing the relief's roof height.

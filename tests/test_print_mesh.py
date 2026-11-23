@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from manifold3d import Manifold, Mesh64
 
-from touch_mapper.print_mesh import _load_shells, _mesh, _separate_facets, finalize_stls
+from touch_mapper.print_mesh import _join_relief, _load_shells, _mesh, _separate_facets, finalize_stls
 
 
 def raw_stl(path, *solids):
@@ -101,6 +101,15 @@ class PrintMeshTest(unittest.TestCase):
         self.assertAlmostEqual(paths.bounding_box()[5], 2.1005, places=6)
         self.assertAlmostEqual(rest.volume() + paths.volume(), full.volume(), places=4)
         self.assertAlmostEqual((rest ^ paths).volume(), 0)
+
+    def test_drops_numerical_void_but_not_floating_relief_of_same_size(self):
+        base = Manifold.cube((20, 30, 0.6))
+        chip = Manifold.cube((0.2, 0.2, 0.06))
+        repaired, feet = _join_relief((base - chip.translate((2, 3, 0.2))).decompose())
+        self.assertAlmostEqual(repaired.volume(), base.volume())
+        self.assertEqual(feet, [])
+        with self.assertRaisesRegex(ValueError, "not attached to the base"):
+            _join_relief((base + chip.translate((2, 3, 2))).decompose())
 
     def test_separates_vertices_that_coincide_in_float32(self):
         cube = Manifold.cube((10, 10, 1)).translate((180, 0, 0))
