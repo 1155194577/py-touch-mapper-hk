@@ -157,7 +157,9 @@ def generate(runtime: Runtime, args):
 
         print("Preparing printable STL solids", file=sys.stderr, flush=True)
         relief_count = finalize_stls(
-            work, blender_relief=True, has_borders=not args.no_borders, build_additional_relief=build_relief
+            work, blender_relief=True, has_borders=not args.no_borders, build_additional_relief=build_relief,
+            blender_scale=args.scale,
+            building_height_mm=0 if args.content_mode == "no-buildings" else args.building_height_mm,
         )
         if args.hkstp_landmarks:
             landmarks_report = hkstp_landmarks.report(source, snapshot, groups, skipped, placed)
