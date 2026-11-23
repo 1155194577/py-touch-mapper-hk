@@ -7,7 +7,7 @@ from manifold3d import Error, Manifold, Mesh64, OpType
 from pymeshfix import PyTMesh
 from shapely.errors import GEOSException
 
-from .relief_mesh import reconstruct_relief
+from .relief_mesh import XY_STEP, Z_STEP, reconstruct_relief
 
 HEADER = struct.Struct("<80sI")
 FACET = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute", "<u2")])
@@ -17,6 +17,9 @@ MAX_SEAM_SPAN_MM = 8
 # Match the pinned engine's base height and overlap in tactile_constants.py.
 BASE_HEIGHT_MM = 0.6
 BASE_JOIN_MM = 0.01
+CORNER_WIDTH_MM = 3 * 1.2
+CORNER_BOTTOM_MM = 2.2 * 0.99
+CORNER_TOP_MM = 3.9
 MAX_MICRO_VOID_MM3 = 0.005
 
 
@@ -218,23 +221,57 @@ def _join_relief(parts):
     return body, feet
 
 
-def _reconstructed_facets(paths, bottom):
+def _split_corner_top(rest, bottom):
+    # The pinned Blender engine exports the northeast marker cap as its own
+    # cuboid, three border widths wide. It is not supported at every XY point.
+    xy = rest[:, :, :2].max(axis=(0, 1))
+    offset = BASE_HEIGHT_MM - BASE_JOIN_MM
+    low = np.r_[xy - CORNER_WIDTH_MM, offset + CORNER_BOTTOM_MM]
+    high = np.r_[xy, offset + CORNER_TOP_MM]
+    extreme = (abs(rest - low) < TOLERANCE_MM) | (abs(rest - high) < TOLERANCE_MM)
+    cap = extreme.all(axis=(1, 2))
+    if np.count_nonzero(cap) != 12:
+        raise ValueError("cannot isolate the overhanging corner marker")
+    points = rest[cap].astype(np.float64)
+    points[:, :, 2] -= bottom
+    steps = np.array([XY_STEP, XY_STEP, Z_STEP])
+    points = np.rint(points / steps) * steps
+    lo, hi = points.min(axis=(0, 1)), points.max(axis=(0, 1))
+    # Enforce one coordinate per side after the Blender-to-mm conversion.
+    points = np.where(abs(points - lo) < abs(points - hi), lo, hi)
+    marker = _mesh(points, "corner marker")
+    if marker.is_empty() or not math.isclose(marker.volume(), np.prod(hi - lo)):
+        raise ValueError("invalid overhanging corner marker")
+    return rest[~cap], marker
+
+
+def _reconstructed_facets(paths, bottom, has_borders):
     try:
         rest, ways = (_read_triangles(path) for path in paths[1:])
+        marker = None
+        if has_borders:
+            rest, marker = _split_corner_top(rest, bottom)
         vertices, surfaces = reconstruct_relief(rest, ways, bottom)
     except (ValueError, GEOSException) as exc:
         raise _error(paths[0].name, str(exc)) from exc
-    for path, surface in zip(paths, surfaces):
+    for slot, (path, surface) in enumerate(zip(paths, surfaces)):
         if not len(surface) and path == paths[2]:
             yield np.zeros(0, dtype=FACET)
             continue
         solid = Manifold(Mesh64(vertices, surface.astype(np.uint64)))
         if solid.status() != Error.NoError:
             raise _error(path.name, "invalid reconstructed relief")
-        yield _stl_facets(path.name, vertices[surface], solid.volume(), path == paths[0])
+        if marker is not None:
+            if slot < 2:
+                yield _solid_facets(path.name, solid + marker, slot == 0)
+                continue
+            if solid.bounding_box()[5] > marker.bounding_box()[2]:
+                yield _solid_facets(path.name, solid - marker)
+                continue
+        yield _stl_facets(path.name, vertices[surface], solid.volume(), slot == 0)
 
 
-def finalize_stls(directory: Path, *, blender_relief=False):
+def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False):
     rest_path, ways_path = (directory / name for name in ("map-rest.stl", "map-ways.stl"))
     rest = Manifold.batch_boolean(_load_shells(rest_path, repair=True), OpType.Add)
     ways = Manifold.batch_boolean(_load_shells(ways_path, repair=True), OpType.Add)
@@ -272,6 +309,6 @@ def finalize_stls(directory: Path, *, blender_relief=False):
     except ValueError:
         if not blender_relief:
             raise
-        facets = tuple(_reconstructed_facets(paths, bottom))
+        facets = tuple(_reconstructed_facets(paths, bottom, has_borders))
     for path, data in zip(paths, facets):
         _write_stl(path, data)

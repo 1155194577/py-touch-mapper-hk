@@ -203,3 +203,26 @@ class PrintMeshTest(unittest.TestCase):
         self.assertAlmostEqual(sum(part.volume() for part in ways), 0.07 * 4 * 0.99, delta=0.002)
         combined = Manifold.batch_boolean([rest, *ways], OpType.Add)
         self.assertAlmostEqual((combined - full).volume() + (full - combined).volume(), 0, delta=1e-4)
+
+    def test_vector_repair_preserves_the_corner_marker_overhang(self):
+        plate = Manifold.cube((10, 10, 0.6))
+        cap = Manifold.cube((3.6, 3.6, 4.49 - 2.768)).translate((6.4, 6.4, 2.768))
+        support = Manifold.cube((3.24, 3.24, 2.2)).translate((6.76, 6.76, 0.59))
+        raw_stl(self.rest, plate, cap, support)
+        raw_stl(self.ways)
+        first = True
+
+        def fail_once(*args, **kwargs):
+            nonlocal first
+            if first:
+                first = False
+                raise ValueError("unsafe STL")
+            return _export_facets(*args, **kwargs)
+
+        with patch("touch_mapper.print_mesh._export_facets", side_effect=fail_once):
+            finalize_stls(self.directory, blender_relief=True, has_borders=True)
+        gap = Manifold.cube((0.1, 0.1, 0.1)).translate((6.5, 6.5, 1.5))
+        for path in (self.full, self.rest):
+            solid, = _load_shells(path)
+            self.assertTrue((solid ^ gap).is_empty())
+            self.assertAlmostEqual((solid ^ gap.translate((0, 0, 1.8))).volume(), gap.volume())
