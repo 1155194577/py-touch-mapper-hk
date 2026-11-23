@@ -305,7 +305,7 @@ def _reconstructed_facets(paths, bottom, has_borders):
             yield _stl_facets(path.name, vertices[surface], solid.volume(), slot == 0)
 
 
-def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False):
+def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, additional_relief=None):
     rest_path, ways_path = (directory / name for name in ("map-rest.stl", "map-ways.stl"))
     rest = Manifold.batch_boolean(_load_shells(rest_path, repair=True), OpType.Add)
     ways = Manifold.batch_boolean(_load_shells(ways_path, repair=True), OpType.Add)
@@ -313,6 +313,8 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False):
         raise _error(rest_path.name, "the map is missing a solid base")
     if ways.status() != Error.NoError:
         raise _error(ways_path.name, "the ways could not be joined")
+    if additional_relief is not None:
+        rest += additional_relief
     # Blender puts the base at Z=0, but relief expansion can reach below it.
     if rest.bounding_box()[2] < -TOLERANCE_MM or (
         not ways.is_empty() and ways.bounding_box()[2] < -TOLERANCE_MM

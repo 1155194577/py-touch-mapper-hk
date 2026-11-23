@@ -66,10 +66,11 @@ touch-mapper generate --osm tests/fixtures/mixed.osm --scale 2100 --out-dir samp
 |---|---|
 | `--center LAT LON` | Fetch a map centered on a point. Defaults to 17 × 17 cm and marks the center in the 3D model. |
 | `--bbox WEST SOUTH EAST NORTH` | Fetch the specified bounds, in longitude/latitude order. |
-| `--osm FILE` | Use the file's bounds and data without fetching anything. |
+| `--osm FILE` | Use the file's bounds and OSM data without fetching from OpenStreetMap. |
 | `--scale N` | Set print scale 1:N (default 1:3100). For a fixed area, a larger N makes a smaller print. |
 | `--width-cm`, `--height-cm` | With `--center`, set physical dimensions. Otherwise bounds and scale determine dimensions. |
 | `--content-mode` | Choose `normal`, `no-buildings`, `only-big-roads`, or `only-named-roads`. |
+| `--hk-tactile-paving` | Add Hong Kong Transport Department tactile guide paths to the STL models. Off by default. |
 | `--marker LAT LON` / `--hide-marker` | Mark an interior point in the 3D model, or omit the default center marker. The marker must fit inside the print edges. |
 
 See `touch-mapper generate --help` for relief height overrides, border and
@@ -79,6 +80,27 @@ OpenStreetMap's public map API; choose a small area or use an offline extract
 if the server rejects the request. For API use you can set
 `TOUCH_MAPPER_OSM_CONTACT` to a contact URL or email included in the User-Agent
 (pass the variable through with `docker run -e TOUCH_MAPPER_OSM_CONTACT …`).
+
+### Hong Kong tactile guide paths
+
+Add `--hk-tactile-paving` to a Hong Kong map to include the Transport
+Department's [Tactile Guide Path Line](https://data.gov.hk/en-data/dataset/hk-td-tis_16-traffic-aids-drawings-v2/resource/2e2bbdac-c47e-4a4d-a40f-908639878bbe)
+from DATA.GOV.HK. The CLI downloads the territory-wide KMZ (it does not send
+your bounds to DATA.GOV.HK) and clips the guide paths to the map. The layer
+can make a network request even with `--osm`; omit the flag for offline use.
+The download is cached for seven days under `$XDG_CACHE_HOME/touch-mapper`
+(default `~/.cache/touch-mapper`). If the download fails, the CLI warns and
+uses the last valid cache if available, or makes the map without the layer.
+
+Guide paths appear as rows of round 1.7 mm-wide raised dots on `map.stl`
+and `map-rest.stl`. The dot tops are 2.8 mm above the print bed, compared
+with about 1.4 mm for default roads. This is a map symbol, not a
+scale reproduction of the paving. Use a close-up map to distinguish short
+paths. This source does not include every guide path, and the flag does not
+include the separate tactile warning-stripe dataset. The layer is STL-only;
+it does not change the SVG, PDF, Blender scene or map description. When
+requested, `manifest.json` reports whether it was included, had no data in
+the printable area, or was unavailable, and includes the source and attribution.
 
 ## Outputs
 
