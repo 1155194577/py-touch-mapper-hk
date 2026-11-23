@@ -1,0 +1,22 @@
+name: Test tactile map generation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 -t py-touch-mapper:test .
+      - run: docker run --rm --network none py-touch-mapper:test doctor --verbose
+      - run: |
+          docker run --rm --network none -e TOUCH_MAPPER_TEST_ENGINE=1 \
+            -v "$PWD/tests:/work/tests:ro" --entrypoint python py-touch-mapper:test \
+            -m unittest discover -s tests -v
