@@ -10,10 +10,12 @@ from xml.etree.ElementTree import ParseError
 from defusedxml.common import DefusedXmlException
 
 from .osm import ATTRIBUTION, Bounds, copy_osm, fetch_osm, read_bounds
+from .print_mesh import finalize_stls
 from .runtime import Runtime
 
 MODES = ("normal", "no-buildings", "only-big-roads", "only-named-roads")
-ARTIFACTS = ("map.stl", "map-ways.stl", "map-rest.stl", "map.svg", "map.pdf", "map.blend", "map-content.json")
+STL_ARTIFACTS = ("map.stl", "map-ways.stl", "map-rest.stl")
+ARTIFACTS = (*STL_ARTIFACTS, "map.svg", "map.pdf", "map.blend", "map-content.json")
 
 
 def number(value: str) -> float:
@@ -112,6 +114,12 @@ def generate(runtime: Runtime, args):
         if args.content_mode in {"only-big-roads", "only-named-roads"}:
             runtime.prune(osm, bounds, dimensions, args)
         runtime.convert(osm, dimensions, marker, args)
+        for filename in STL_ARTIFACTS:
+            artifact = work / filename
+            if not artifact.is_file() or not artifact.stat().st_size:
+                raise ValueError(f"converter did not produce {filename}")
+        print("Preparing printable STL solids", file=sys.stderr, flush=True)
+        finalize_stls(work)
         runtime.describe(work)
         runtime.embossing_pdf(work)
 

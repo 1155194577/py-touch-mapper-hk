@@ -21,11 +21,13 @@ description: Generate local, printable tactile street maps from a latitude/longi
    instructions instead of installing a similarly named package.
 4. Generate into a new directory. Treat stdout as a JSON manifest and stderr
    as diagnostics. Use `--verbose` for engine logs. Do not report success
-   unless the requested artifact exists.
+   unless the command succeeds and the requested artifact exists. A successful
+   STL export means the one-piece relief and base passed the solid geometry checks.
 5. Return the requested STL, SVG or PDF, the final print dimensions, and
    attribution to [OpenStreetMap contributors](https://www.openstreetmap.org/copyright).
    Include `map-content.json` if the reader wants the feature description.
-   Do not present the STL as sliced or printer-ready G-code.
+   Ask the recipient to verify bed fit and layer preview in their slicer; an STL
+   is not sliced or printer-ready G-code.
 
 ## Commands
 
@@ -51,7 +53,8 @@ docker run --rm --platform linux/amd64 --network none \
   generate --osm area.osm --scale 2100 --out-dir tactile-map
 ```
 
-Use `map.stl` for a one-piece print, or `map-ways.stl` and `map-rest.stl`
-together for a split print. Use `map.svg` or `map.pdf` for embossing. If the
+Use `map.stl` for a one-piece print, or import `map-ways.stl` and `map-rest.stl`
+as parts of the same object in the slicer, keeping their shared origin. Skip an
+empty ways STL. Use `map.svg` or `map.pdf` for embossing. If the
 OpenStreetMap API rejects an area, shrink the bounds or use a local extract;
 do not repeatedly retry the same oversized request.

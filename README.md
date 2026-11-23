@@ -2,8 +2,9 @@
 
 A Python CLI for making tactile maps from OpenStreetMap. It runs the original
 [Touch Mapper](https://github.com/skarkkai/touch-mapper) converter locally: OSM2World
-builds the geometry, the clipper trims it to the print area, Blender applies the
-tactile relief, and the map description is generated from the same features.
+builds the geometry, the clipper trims it to the print area, and Blender applies
+the tactile relief. A final STL step fuses the relief to the base without
+remeshing the map. The map description is generated from the same features.
 There is no website, AWS account, or API key to configure.
 
 ## Quick start (Docker)
@@ -83,8 +84,8 @@ if the server rejects the request. For API use you can set
 
 | Output | Use |
 |---|---|
-| `map.stl` | One-piece 3D print in millimetres. |
-| `map-ways.stl`, `map-rest.stl` | Aligned split parts for different materials or colours. An empty ways part is valid. |
+| `map.stl` | One connected solid with a flat base at Z=0, in millimetres. |
+| `map-ways.stl`, `map-rest.stl` | Import together as parts of one object for a multi-material print. Keep their shared origin; don't drop each part onto the bed. Skip the ways file if it has no triangles. |
 | `map.svg`, `map.pdf` | North-up embossing artwork; includes extra space above the map for orientation. |
 | `map.blend` | Editable Blender scene. |
 | `map-content.json` | Structured description from the upstream map data pipeline. |
@@ -92,8 +93,11 @@ if the server rejects the request. For API use you can set
 
 On success, the CLI also prints the manifest as JSON to stdout; progress and
 errors go to stderr. Keep [OpenStreetMap attribution](https://www.openstreetmap.org/copyright)
-with maps you share. Verify print dimensions and legibility in your slicer or
-embosser; the CLI does not generate printer-specific G-code.
+with maps you share. The CLI resolves overlaps between the split parts and
+checks the STL geometry before publishing any files. It fails rather than saving
+a broken mesh or silently deleting tactile features. Check bed fit, relief
+and layer preview in your slicer: printer profiles, minimum feature size and
+G-code are outside the CLI.
 
 ## Agent skill
 
