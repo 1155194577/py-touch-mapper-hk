@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from manifold3d import CrossSection, FillRule, Manifold, OpType
 from shapely import Point, Polygon, box, make_valid, union_all
-from shapely.affinity import translate
+from shapely.affinity import scale, translate
 from shapely.errors import GEOSException
 from shapely.geometry import shape
 from shapely.ops import linemerge, nearest_points, transform
@@ -125,6 +125,11 @@ def _relief(layers, size_mm):
             continue
         for point in _parts(project(_read_geometry(row)), "Point"):
             marker = _symbol(kind, point)
+            if kind == "restroom.wheelchair" and allowed.covers(point):
+                for factor in (0.9, 0.8, 0.7, 0.6):
+                    if allowed.covers(marker):
+                        break
+                    marker = scale(_symbol(kind, point), factor, factor, origin=point)
             if not allowed.covers(marker) or any(marker.distance(old) < 0.9 for old in markers):
                 continue
             markers.append(marker)

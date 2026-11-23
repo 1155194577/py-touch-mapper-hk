@@ -146,6 +146,19 @@ class HkstpTest(unittest.TestCase):
             self.assertGreater(shells[0].volume(), 0)
             self.assertEqual(shells[0].bounding_box()[2], 0)
 
+    def test_small_print_keeps_restroom_cross_clear_of_restricted_unit(self):
+        layers = snapshot()["layers"]
+        layers["landmarks"][2]["geometry"]["coordinates"] = xy(58.5, 60)
+        _, relief, landmarks = _relief(layers, 120)
+        project = _projector(_read_geometry(layers["floor"][0]), 120)
+        point = project(Point(xy(58.5, 60)))
+        restricted = project(_read_geometry(layers["units"][1]))
+        cross = next(part for part in relief["landmarks"].geoms if part.covers(point))
+        self.assertIn("restroom.wheelchair", [item["kind"] for item in landmarks])
+        self.assertGreater(cross.distance(restricted), 0.15)
+        self.assertGreaterEqual(cross.bounds[2] - cross.bounds[0], 2.63)
+        self.assertLess(cross.bounds[2] - cross.bounds[0], 4.4)
+
     def test_osm_command_does_not_fetch_hkstp(self):
         with (
             patch.object(hkstp, "load_floor") as load,
