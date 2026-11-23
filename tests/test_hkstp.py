@@ -9,12 +9,12 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
-from shapely import Point
+from shapely import Point, Polygon
 
 from touch_mapper import hkstp
 from touch_mapper.cli import main
-from touch_mapper.floor_mesh import FILES, _projector, _read_geometry, _relief
-from touch_mapper.print_mesh import _load_shells
+from touch_mapper.floor_mesh import FILES, _extrude, _projector, _read_geometry, _relief
+from touch_mapper.print_mesh import _load_shells, _solid_facets
 
 
 def xy(x, y):
@@ -158,6 +158,11 @@ class HkstpTest(unittest.TestCase):
         self.assertGreater(cross.distance(restricted), 0.15)
         self.assertGreaterEqual(cross.bounds[2] - cross.bounds[0], 2.63)
         self.assertLess(cross.bounds[2] - cross.bounds[0], 4.4)
+
+    def test_nearly_collinear_outline_survives_stl_precision(self):
+        outline = Polygon([(159.56, 83.44), (159.44, 83.52), (158.38, 84.48), (161.6, 82.08)])
+        facets = _solid_facets("map.stl", _extrude(outline, 0, 2.4), single_piece=True)
+        self.assertGreater(len(facets), 0)
 
     def test_osm_command_does_not_fetch_hkstp(self):
         with (

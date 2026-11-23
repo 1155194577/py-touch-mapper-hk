@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from manifold3d import CrossSection, FillRule, Manifold, OpType
-from shapely import Point, Polygon, box, make_valid, union_all
+from shapely import Point, Polygon, box, make_valid, set_precision, union_all
 from shapely.affinity import scale, translate
 from shapely.errors import GEOSException
 from shapely.geometry import shape
@@ -15,7 +15,8 @@ from .osm import EARTH_CIRCUMFERENCE_M, mercator_y
 from .print_mesh import _solid_facets, _write_stl
 
 
-GRID_MM = 0.02
+# Binary STL stores float32 vertices, which represent this grid exactly.
+GRID_MM = 1 / 64
 SIMPLIFY_MM = 0.14
 BASE_MM = 1.8
 HEIGHTS = {"units": 2.4, "corridors": 2.85, "border": 3.05, "landmarks": 3.7}
@@ -62,9 +63,9 @@ def _projector(floor, size_mm):
     return project
 
 
-def _clean(geometry):
+def _clean(geometry, grid_mm):
     polygons = tuple(_parts(make_valid(geometry), "Polygon"))
-    return union_all(polygons, grid_size=GRID_MM)
+    return set_precision(union_all(polygons, grid_size=grid_mm), grid_mm)
 
 
 def _symbol(kind, point):
@@ -79,10 +80,10 @@ def _symbol(kind, point):
     return translate(geometry, point.x, point.y)
 
 
-def _relief(layers, size_mm):
+def _relief(layers, size_mm, grid_mm=GRID_MM):
     footprint = _read_geometry(layers["floor"][0])
     project = _projector(footprint, size_mm)
-    base = _clean(project(footprint).simplify(SIMPLIFY_MM))
+    base = _clean(project(footprint).simplify(SIMPLIFY_MM), grid_mm)
     if base.geom_type != "Polygon" or base.is_empty:
         raise ValueError("CSDI floor does not form one connected footprint")
     border = base.difference(base.buffer(-1.25))
@@ -90,8 +91,11 @@ def _relief(layers, size_mm):
     if interior.is_empty:
         raise ValueError("CSDI floor is too narrow for the raised border")
 
-    units = [(row["properties"].get("RESTRICTED"), _clean(project(_read_geometry(row)))) for row in layers["units"]]
-    restricted = _clean(union_all([unit for access, unit in units if access != "N"]))
+    units = [
+        (row["properties"].get("RESTRICTED"), _clean(project(_read_geometry(row)), grid_mm))
+        for row in layers["units"]
+    ]
+    restricted = _clean(union_all([unit for access, unit in units if access != "N"]), grid_mm)
     allowed = interior.difference(restricted.buffer(0.15))
     corridors = []
     for row in layers["network"]:
@@ -150,22 +154,30 @@ def _relief(layers, size_mm):
     }, landmarks
 
 
-def _extrude(geometry, lower, upper):
+def _extrude(geometry, lower, upper, grid_mm=GRID_MM):
     paths = []
-    for polygon in _parts(_clean(geometry), "Polygon"):
+    for polygon in _parts(_clean(geometry, grid_mm), "Polygon"):
         paths.extend(np.asarray(ring.coords)[:-1] for ring in (polygon.exterior, *polygon.interiors))
     return CrossSection(paths, FillRule.EvenOdd).extrude(upper - lower).translate((0, 0, lower))
 
 
 def _build(snapshot, size_mm):
     try:
-        base, relief, landmarks = _relief(snapshot["layers"], size_mm)
-        parts = [_extrude(base, 0, BASE_MM)]
-        for kind, geometry in relief.items():
-            if not geometry.is_empty:
-                parts.append(_extrude(geometry, BASE_MM - 0.15, HEIGHTS[kind]))
-        solid = Manifold.batch_boolean(parts, OpType.Add)
-        facets = _solid_facets(FILES[0], solid, single_piece=True)
+        for grid_mm in (GRID_MM, 2 * GRID_MM):
+            base, relief, landmarks = _relief(snapshot["layers"], size_mm, grid_mm)
+            parts = [_extrude(base, 0, BASE_MM, grid_mm)]
+            for kind, geometry in relief.items():
+                if not geometry.is_empty:
+                    parts.append(_extrude(geometry, BASE_MM - 0.15, HEIGHTS[kind], grid_mm))
+            solid = Manifold.batch_boolean(parts, OpType.Add)
+            try:
+                facets = _solid_facets(FILES[0], solid, single_piece=True)
+            except ValueError:
+                # A coarser grid can remove slivers before triangulation.
+                if grid_mm != GRID_MM:
+                    raise
+            else:
+                break
     except GEOSException as exc:
         raise ValueError(f"cannot make HKSTP floor geometry printable: {exc}") from exc
     west, south, bottom, east, north, top = solid.bounding_box()
