@@ -30,6 +30,31 @@ class PrintMeshTest(unittest.TestCase):
         self.rest = self.directory / "map-rest.stl"
         self.ways = self.directory / "map-ways.stl"
 
+    def test_additional_relief_counts_only_exposed_dots(self):
+        plate = Manifold.cube((10, 10, 0.6))
+        building = Manifold.cube((3, 3, 3)).translate((1, 1, 0.5))
+        raw_stl(self.rest, plate, building)
+        raw_stl(self.ways)
+        dot = Manifold.cylinder(2.6, 0.85, circular_segments=12)
+        dots = Manifold.compose([dot.translate((x, x, 0.2)) for x in (2, 6)])
+        self.assertEqual(finalize_stls(self.directory, additional_relief=dots), 1)
+        full, = _load_shells(self.full)
+        self.assertAlmostEqual(full.volume(), 60 + 3 * 3 * 2.9 + 2.2 * 3 * 0.85 ** 2, places=4)
+
+    def test_vector_repair_keeps_exposed_paving_in_full_and_rest_stls(self):
+        raw_stl(self.rest, Manifold.cube((10, 10, 0.6)))
+        raw_stl(self.ways, Manifold.cube((2, 8, 1.2)).translate((4, 1, 0.5)))
+        dot = Manifold.cylinder(2.6, 0.85, circular_segments=12).translate((5, 5, 0.2))
+        with patch("touch_mapper.print_mesh._solid_facets", side_effect=ValueError("unsafe STL")):
+            self.assertEqual(finalize_stls(self.directory, blender_relief=True, additional_relief=dot), 1)
+        full, = _load_shells(self.full)
+        rest, = _load_shells(self.rest)
+        for solid in (full, rest):
+            self.assertEqual(solid.bounding_box()[2], 0)
+            self.assertAlmostEqual(solid.bounding_box()[5], 2.8, delta=0.0001)
+        ways = _load_shells(self.ways)
+        self.assertAlmostEqual(rest.volume() + sum(part.volume() for part in ways), full.volume(), places=4)
+
     def test_fuses_overlapping_shells_and_partitions_split_stls(self):
         base = Manifold.cube((20, 30, 0.6))
         building = Manifold.cube((3, 4, 2)).translate((2, 2, 0.59))

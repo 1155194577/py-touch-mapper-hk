@@ -27,8 +27,10 @@ MAX_KML_BYTES = 24 * 1024 * 1024
 KML_NS = "{http://www.opengis.net/kml/2.2}"
 DOT_RADIUS_MM = 0.85
 DOT_SPACING_MM = 2.8
+MIN_DOT_SPACING_MM = 2.0
 DOT_TOP_MM = 2.8
 DOT_BOTTOM_MM = 0.2
+BORDER_WIDTH_MM = 1.2  # Pinned upstream converter/tactile_constants.py.
 
 
 def _parse_kmz(data):
@@ -100,14 +102,14 @@ def load_paths(bounds):
     return paths
 
 
-def _clip_segment(start, end, width, height):
+def _clip_segment(start, end, width, height, margin):
     low, high = 0.0, 1.0
     for a, b, maximum in zip(start, end, (width, height)):
         if a == b:
-            if not DOT_RADIUS_MM <= a <= maximum - DOT_RADIUS_MM:
+            if not margin <= a <= maximum - margin:
                 return None
             continue
-        enter, leave = sorted(((DOT_RADIUS_MM - a) / (b - a), (maximum - DOT_RADIUS_MM - a) / (b - a)))
+        enter, leave = sorted(((margin - a) / (b - a), (maximum - margin - a) / (b - a)))
         low, high = max(low, enter), min(high, leave)
         if low >= high:
             return None
@@ -120,10 +122,10 @@ def _point_at(start, end, fraction):
     return tuple(a + (b - a) * fraction for a, b in zip(start, end))
 
 
-def _runs(points, width, height):
+def _runs(points, width, height, margin):
     run = []
     for a, b in zip(points, points[1:]):
-        clipped = _clip_segment(a, b, width, height)
+        clipped = _clip_segment(a, b, width, height, margin)
         if run and (clipped is None or run[-1] != clipped[0]):
             yield run
             run = []
@@ -138,7 +140,7 @@ def _runs(points, width, height):
 def _dot_centers(points):
     segments = [(a, b, math.dist(a, b)) for a, b in zip(points, points[1:]) if a != b]
     length = sum(distance for _, _, distance in segments)
-    count = max(1, math.ceil(length / DOT_SPACING_MM))
+    count = max(1, min(math.ceil(length / DOT_SPACING_MM), int(length / MIN_DOT_SPACING_MM)))
     start = 0
     index = 0
     for a, b, distance in segments:
@@ -148,20 +150,40 @@ def _dot_centers(points):
         start += distance
 
 
-def paving_relief(paths, bounds, scale):
+def _separate_centers(candidates):
+    grid = {}
+    for x, y in candidates:
+        ix, iy = math.floor(x / MIN_DOT_SPACING_MM), math.floor(y / MIN_DOT_SPACING_MM)
+        if any(
+            math.hypot(x - a, y - b) < MIN_DOT_SPACING_MM
+            for i in range(ix - 1, ix + 2)
+            for j in range(iy - 1, iy + 2)
+            for a, b in grid.get((i, j), ())
+        ):
+            continue
+        grid.setdefault((ix, iy), []).append((x, y))
+        yield x, y
+
+
+def paving_relief(paths, bounds, scale, *, has_borders=False):
     width, height = (span * 1000 / scale for span in bounds._span_meters())
     south = mercator_y(bounds.south)
     lon_span = bounds.east - bounds.west
     y_span = mercator_y(bounds.north) - south
-    centers = set()
+    margin = DOT_RADIUS_MM + (BORDER_WIDTH_MM if has_borders else 0)
+    corner_margin = 3 * BORDER_WIDTH_MM + DOT_RADIUS_MM
+    candidates = []
     for line in paths:
         points = [
             ((lon - bounds.west) / lon_span * width, (mercator_y(lat) - south) / y_span * height)
             for lon, lat in line
         ]
-        for run in _runs(points, width, height):
-            centers.update(_dot_centers(run))
+        for run in _runs(points, width, height, margin):
+            for x, y in _dot_centers(run):
+                if not has_borders or x < width - corner_margin or y < height - corner_margin:
+                    candidates.append((x, y))
 
+    centers = list(_separate_centers(candidates))
     dot = Manifold.cylinder(DOT_TOP_MM - DOT_BOTTOM_MM, DOT_RADIUS_MM, circular_segments=12)
     relief = Manifold.batch_boolean(
         [dot.translate((x, y, DOT_BOTTOM_MM)) for x, y in sorted(centers)], OpType.Add

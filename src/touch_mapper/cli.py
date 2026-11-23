@@ -120,21 +120,13 @@ def generate(runtime: Runtime, args):
             artifact = work / filename
             if not artifact.is_file() or not artifact.stat().st_size:
                 raise ValueError(f"converter did not produce {filename}")
-        paving = relief = None
+        paths = relief = None
         if args.hk_tactile_paving:
             paths = hk_paving.load_paths(bounds)
-            dot_count = 0
             if paths:
-                relief, dot_count = hk_paving.paving_relief(paths, bounds, args.scale)
-            status = "unavailable" if paths is None else "included" if dot_count else "no-data"
-            paving = {
-                "status": status,
-                "dotCount": dot_count,
-                "source": hk_paving.SOURCE,
-                "attribution": hk_paving.ATTRIBUTION,
-            }
+                relief, _ = hk_paving.paving_relief(paths, bounds, args.scale, has_borders=not args.no_borders)
         print("Preparing printable STL solids", file=sys.stderr, flush=True)
-        finalize_stls(work, blender_relief=True, has_borders=not args.no_borders, additional_relief=relief)
+        dot_count = finalize_stls(work, blender_relief=True, has_borders=not args.no_borders, additional_relief=relief)
         runtime.describe(work)
         runtime.embossing_pdf(work)
 
@@ -155,8 +147,14 @@ def generate(runtime: Runtime, args):
             "contentMode": args.content_mode,
             "attribution": ATTRIBUTION,
         }
-        if paving:
-            manifest["hkTactilePaving"] = paving
+        if args.hk_tactile_paving:
+            status = "unavailable" if paths is None else "included" if dot_count else "no-data"
+            manifest["hkTactilePaving"] = {
+                "status": status,
+                "dotCount": dot_count,
+                "source": hk_paving.SOURCE,
+                "attribution": hk_paving.ATTRIBUTION,
+            }
         (result / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         if output.exists() or output.is_symlink():
             raise ValueError(f"output directory already exists: {output}")

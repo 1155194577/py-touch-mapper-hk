@@ -77,6 +77,29 @@ class HkPavingTest(unittest.TestCase):
         self.assertAlmostEqual(bottom, hk_paving.DOT_BOTTOM_MM)
         self.assertAlmostEqual(top, hk_paving.DOT_TOP_MM)
 
+    def test_dot_just_above_target_spacing_stays_centered(self):
+        length_mm = hk_paving.DOT_SPACING_MM + 0.03
+        self.assertEqual(list(hk_paving._dot_centers([(0, 0), (length_mm, 0)])), [(length_mm / 2, 0)])
+
+    def test_dots_do_not_fuse_at_a_hairpin(self):
+        run = [(0, 0), (9, 0), (9, 1), (0, 1)]
+        candidates = list(hk_paving._dot_centers(run))
+        dots = list(hk_paving._separate_centers(candidates))
+        self.assertGreater(len(dots), 1)
+        self.assertLess(len(dots), len(candidates))
+        for i, (x, y) in enumerate(dots):
+            for a, b in dots[:i]:
+                self.assertGreater((x - a) ** 2 + (y - b) ** 2, (2 * hk_paving.DOT_RADIUS_MM) ** 2)
+
+    def test_corner_only_path_is_free_of_marker_and_border_conflicts(self):
+        paths = [[(114.20097, 22.400975), (114.20098, 22.40098)]]
+        relief, count = hk_paving.paving_relief(paths, BOUNDS, 1000, has_borders=True)
+        self.assertEqual(count, 0)
+        self.assertTrue(relief.is_empty())
+        relief, count = hk_paving.paving_relief(paths, BOUNDS, 1000, has_borders=False)
+        self.assertEqual(count, 1)
+        self.assertFalse(relief.is_empty())
+
     @unittest.skipUnless(os.environ.get("TOUCH_MAPPER_TEST_ENGINE") == "1", "requires the built Touch Mapper engine")
     def test_cli_opt_in_adds_attached_relief_and_handles_failure(self):
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"XDG_CACHE_HOME": root}):
