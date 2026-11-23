@@ -60,14 +60,18 @@ def _write_stl(path, solid, single_piece=False):
     facets = np.zeros(0, dtype=FACET)
     if not solid.is_empty():
         mesh = solid.to_mesh64()
-        triangles = mesh.vert_properties[mesh.tri_verts].astype(np.float32)
-        points = triangles.astype(np.float64)
+        # Round while faces still share vertex indices so collapsed edges can be stitched.
+        points = mesh.vert_properties.astype(np.float32).astype(np.float64)
+        rounded = Manifold(Mesh64(points, np.array(mesh.tri_verts)))
+        mesh = rounded.to_mesh64()
+        points = mesh.vert_properties[mesh.tri_verts]
         normals = np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0])
         lengths = np.linalg.norm(normals, axis=1)
-        keep = lengths > 0
-        facets = np.zeros(keep.sum(), dtype=FACET)
-        facets["vertices"] = triangles[keep]
-        facets["normal"] = normals[keep] / lengths[keep, None]
+        if rounded.status() != Error.NoError or not len(points) or (lengths == 0).any():
+            raise _error(path.name, "solid did not survive STL precision")
+        facets = np.zeros(len(points), dtype=FACET)
+        facets["vertices"] = points
+        facets["normal"] = normals / lengths[:, None]
 
         quantized = _mesh(facets["vertices"], path.name)
         if quantized.is_empty() or not math.isclose(quantized.volume(), solid.volume(), rel_tol=0.001):

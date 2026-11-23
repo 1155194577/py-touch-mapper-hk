@@ -153,10 +153,10 @@ class CliTest(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("TOUCH_MAPPER_TEST_ENGINE") == "1", "requires the built Touch Mapper engine")
 class RealEngineTest(unittest.TestCase):
-    def render(self, input_path, output, *options):
+    def render(self, input_path, output, *options, scale=2100):
         process = subprocess.run(
             [sys.executable, "-m", "touch_mapper", "generate", "--osm", str(input_path),
-             "--scale", "2100", "--out-dir", str(output), *options],
+             "--scale", str(scale), "--out-dir", str(output), *options],
             text=True, capture_output=True, timeout=120,
         )
         self.assertEqual(process.returncode, 0, process.stderr)
@@ -200,3 +200,11 @@ class RealEngineTest(unittest.TestCase):
             self.assertNotIn("Library", json.dumps(filtered))
             self.assertIn("Main Street", json.dumps(filtered["A"]))
             self.assertEqual(filtered["metadata"]["printHeightsMm"]["buildings"], 0)
+
+    def test_big_roads_survive_binary_stl_precision(self):
+        fixture = Path(os.environ["TOUCH_MAPPER_RUNTIME"]) / "test/data/map.osm"
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "major roads"
+            self.render(fixture, output, "--content-mode", "only-big-roads", scale=1400)
+            self.assertEqual(len(_load_shells(output / "map.stl")), 1)
+            self.assertTrue(_load_shells(output / "map-ways.stl"))
