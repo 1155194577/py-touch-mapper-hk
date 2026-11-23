@@ -102,6 +102,30 @@ it does not change the SVG, PDF, Blender scene or map description. When
 requested, `manifest.json` reports whether it was included, had no data in
 the printable area, or was unavailable, and includes the source and attribution.
 
+### HKSTP Green 18 ground floor
+
+The optional `hkstp-floor` command makes a separate tactile map of **Green 18,
+ground floor (GF)** at Hong Kong Science Park. It does not use OSM or need the
+upstream Touch Mapper runtime. Other buildings and floors are not supported.
+
+```sh
+touch-mapper hkstp-floor --building "Green 18" --floor GF --out-dir green-18-gf
+```
+
+The command queries the [HKSTP CSDI indoor datasets](https://portal.csdi.gov.hk/csdi-webpage/dataset/itc_rcd_1732154638960_53979).
+It writes one `map.stl` (north up, longest side 190 mm by default), an
+accessible text `legend.md`, and a `manifest.json` with source/print details.
+The map has a raised perimeter, low non-restricted unit outlines, mapped footways,
+and distinct symbols for the principal doorway, lifts, visitor services and
+wheelchair restroom. The footways are not physical tactile paving; confirm
+landmark locations, public access and route connectivity with Science Park staff.
+Print at 100%; if needed, choose a different longest side with `--size-mm`.
+Keep the legend and its attribution with the print.
+
+Only this command downloads HKSTP data. The snapshot is cached for seven days
+under `$XDG_CACHE_HOME/touch-mapper` (default `~/.cache/touch-mapper`); on a failed
+request the CLI uses the last valid snapshot with a warning, if one exists.
+
 ## Outputs
 
 | Output | Use |
