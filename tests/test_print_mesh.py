@@ -90,6 +90,70 @@ class PrintMeshTest(unittest.TestCase):
             finalize_stls(self.directory)
         self.assertFalse(self.full.exists())
 
+    def test_reconstructs_detached_blender_building_roof_at_original_height(self):
+        base = Manifold.cube((20, 30, 0.6))
+        roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 2.57))
+        road = Manifold.cube((2, 12, 0.82)).translate((5, 1, 0.59))
+        raw_stl(self.rest, base, roof)
+        raw_stl(self.ways, road)
+        with self.assertRaisesRegex(ValueError, "not attached to the base"):
+            finalize_stls(self.directory)
+
+        finalize_stls(self.directory, blender_relief=True, blender_scale=2500, building_height_mm=2)
+
+        full, = _load_shells(self.full)
+        rest, = _load_shells(self.rest)
+        ways = _load_shells(self.ways)
+        self.assertAlmostEqual(rest.slice(2).area(), 12)
+        self.assertAlmostEqual(full.bounding_box()[5], 2.61, delta=0.0001)
+        self.assertAlmostEqual(rest.volume() + sum(part.volume() for part in ways), full.volume(), places=4)
+
+    def test_roof_repair_counts_only_paving_dots_exposed_after_reconstruction(self):
+        base = Manifold.cube((20, 30, 0.6))
+        roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 3.47))
+        raw_stl(self.rest, base, roof)
+        raw_stl(self.ways)
+        dots = partial(_build_relief, [(6, 6), (12, 12)])
+
+        count = finalize_stls(
+            self.directory, blender_relief=True, blender_scale=2500, build_additional_relief=dots,
+        )
+
+        self.assertEqual(count, 1)
+        full, = _load_shells(self.full)
+        self.assertAlmostEqual(full.slice(3).area(), 12)
+        self.assertGreater(full.slice(2.5).area(), 12)
+
+    def test_borderless_roof_repair_clips_attached_road_at_plate_edge(self):
+        base = Manifold.cube((20, 30, 0.6))
+        roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 3.47))
+        road = Manifold.cube((4, 2, 0.82)).translate((-1, 10, 0.59))
+        raw_stl(self.rest, base, roof)
+        raw_stl(self.ways, road)
+
+        finalize_stls(self.directory, blender_relief=True, blender_scale=2500)
+
+        full, = _load_shells(self.full)
+        rest, = _load_shells(self.rest)
+        ways, = _load_shells(self.ways)
+        np.testing.assert_allclose(ways.bounding_box()[:2] + ways.bounding_box()[3:5], (0, 10, 3, 12))
+        self.assertAlmostEqual(ways.slice(1).area(), 6)
+        self.assertAlmostEqual(rest.slice(2).area(), 12)
+        self.assertAlmostEqual(rest.volume() + ways.volume(), full.volume(), places=4)
+
+    def test_blender_roof_repair_does_not_join_floating_ways_or_roofs_outside_plate(self):
+        base = Manifold.cube((20, 30, 0.6))
+        roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 3.47))
+        for rest, ways in (
+            ((base,), (roof,)),
+            ((base, roof.translate((14, 0, 0))), ()),
+        ):
+            with self.subTest(rest_count=len(rest), ways_count=len(ways)):
+                raw_stl(self.rest, *rest)
+                raw_stl(self.ways, *ways)
+                with self.assertRaisesRegex(ValueError, "not attached to the base"):
+                    finalize_stls(self.directory, blender_relief=True, blender_scale=2500)
+
     def test_rejects_open_raw_stl(self):
         raw_stl(self.rest, Manifold.cube((20, 30, 0.6)))
         data = self.rest.read_bytes()

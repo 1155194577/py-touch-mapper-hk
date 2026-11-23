@@ -17,6 +17,8 @@ MAX_SEAM_SPAN_MM = 8
 # Match the pinned engine's base height and overlap in tactile_constants.py.
 BASE_HEIGHT_MM = 0.6
 BASE_JOIN_MM = 0.01
+BUILDING_HEIGHT_MM = 2.9
+BLENDER_FATTEN_UNITS = 0.05
 CORNER_WIDTH_MM = 3 * 1.2
 CORNER_BOTTOM_MM = 2.2 * 0.99
 CORNER_TOP_MM = 3.9
@@ -190,12 +192,37 @@ def _without_slivers(solid):
     return Manifold.compose(kept) if len(kept) < len(parts) else solid
 
 
-def _join_relief(parts):
-    body = max(
+def _base_body(parts):
+    return max(
         (part for part in parts if abs(part.bounding_box()[2]) <= TOLERANCE_MM),
         key=lambda part: part.volume(),
         default=None,
     )
+
+
+def _separate_blender_roofs(parts, ways, scale, building_height):
+    body = _base_body(parts)
+    if body is None or building_height == 0:
+        return parts, False
+    ground = body.bounding_box()[2]
+    roof = ground + BASE_HEIGHT_MM - BASE_JOIN_MM + building_height
+    margin = 1000 * BLENDER_FATTEN_UNITS / scale + TOLERANCE_MM
+    footprint = body.slice(ground + BASE_JOIN_MM)
+    kept = []
+    for part in parts:
+        _, _, low, _, _, high = part.bounding_box()
+        # Blender can export a closed roof skin without its walls after fattening.
+        if (low > ground + BASE_HEIGHT_MM + TOLERANCE_MM
+                and roof - margin <= low <= roof <= high <= roof + margin
+                and part.volume() > 0 and (part ^ ways).is_empty()
+                and not part.project().is_empty() and (part.project() - footprint).is_empty()):
+            continue
+        kept.append(part)
+    return kept, len(kept) != len(parts)
+
+
+def _join_relief(parts):
+    body = _base_body(parts)
     if body is None:
         raise _error("map.stl", "the base is not on the build plane")
     kept = [body]
@@ -275,7 +302,7 @@ def _restore_marker(paths, solids, marker):
     )
 
 
-def _reconstructed_facets(paths, bottom, has_borders, additional_relief):
+def _reconstructed_facets(paths, bottom, has_borders, additional_relief, *, clip_ways=False):
     try:
         rest, ways = (_read_triangles(path) for path in paths[1:])
         marker = None
@@ -284,7 +311,7 @@ def _reconstructed_facets(paths, bottom, has_borders, additional_relief):
         if additional_relief is not None and not additional_relief.is_empty():
             dots = additional_relief.to_mesh64()
             rest = np.concatenate((rest, dots.vert_properties[dots.tri_verts]))
-        vertices, surfaces = reconstruct_relief(rest, ways, bottom)
+        vertices, surfaces = reconstruct_relief(rest, ways, bottom, clip_ways=clip_ways)
     except (ValueError, GEOSException) as exc:
         raise _error(paths[0].name, str(exc)) from exc
     solids = tuple(_roof_solids(paths, vertices, surfaces))
@@ -308,7 +335,15 @@ def _reconstructed_facets(paths, bottom, has_borders, additional_relief):
             yield _stl_facets(path.name, vertices[surface], solid.volume(), slot == 0)
 
 
-def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, build_additional_relief=None):
+def _additional_relief(build, rest, ways):
+    relief, count = build(rest, ways)
+    if relief.status() != Error.NoError:
+        raise _error("map.stl", "invalid additional relief")
+    return relief, count
+
+
+def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, build_additional_relief=None,
+                  blender_scale=None, building_height_mm=None):
     rest_path, ways_path = (directory / name for name in ("map-rest.stl", "map-ways.stl"))
     rest = Manifold.batch_boolean(_load_shells(rest_path, repair=True), OpType.Add)
     ways = Manifold.batch_boolean(_load_shells(ways_path, repair=True), OpType.Add)
@@ -318,12 +353,6 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
         raise _error(ways_path.name, "the ways could not be joined")
     additional_relief = None
     exposed_count = 0
-    if build_additional_relief is not None:
-        additional_relief, exposed_count = build_additional_relief(rest, ways)
-        if additional_relief.status() != Error.NoError:
-            raise _error("map.stl", "invalid additional relief")
-        if exposed_count:
-            rest += additional_relief
     # Blender puts the base at Z=0, but relief expansion can reach below it.
     if rest.bounding_box()[2] < -TOLERANCE_MM or (
         not ways.is_empty() and ways.bounding_box()[2] < -TOLERANCE_MM
@@ -334,7 +363,21 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
     if full.status() != Error.NoError or full.is_empty():
         raise _error("map.stl", "solid assembly failed")
     parts = full.decompose()
-    if len(parts) > 1:
+    reconstruct_roofs = False
+    if len(parts) > 1 and blender_relief and blender_scale is not None:
+        height = BUILDING_HEIGHT_MM if building_height_mm is None else building_height_mm
+        parts, reconstruct_roofs = _separate_blender_roofs(parts, ways, blender_scale, height)
+    if not reconstruct_roofs and build_additional_relief is not None:
+        additional_relief, exposed_count = _additional_relief(build_additional_relief, rest, ways)
+        if exposed_count:
+            rest += additional_relief
+            if rest.bounding_box()[2] < -TOLERANCE_MM:
+                rest = _trim_below_base(rest)
+            full = rest + ways
+            if full.status() != Error.NoError or full.is_empty():
+                raise _error("map.stl", "solid assembly failed")
+            parts = full.decompose()
+    if len(parts) > 1 or reconstruct_roofs:
         full, feet = _join_relief(parts)
         if feet:
             rest = Manifold.batch_boolean([rest, *feet], OpType.Add)
@@ -345,15 +388,29 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
     offset = (0, 0, -bottom)
     # The split models share coordinates; the base and other relief keep priority.
     paths = (directory / "map.stl", rest_path, ways_path)
-    try:
-        facets = (
-            _solid_facets(paths[0].name, full.translate(offset), single_piece=True),
-            _solid_facets(rest_path.name, rest.translate(offset)),
-            _solid_facets(ways_path.name, _without_slivers(ways - rest).translate(offset)),
-        )
-    except ValueError:
-        if not blender_relief:
-            raise
+    facets = None
+    if reconstruct_roofs:
+        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, None, clip_ways=not has_borders))
+        if build_additional_relief is not None:
+            rebuilt_rest, rebuilt_ways = (
+                _mesh(facets[slot]["vertices"], paths[slot].name) if len(facets[slot]) else Manifold()
+                for slot in (1, 2)
+            )
+            additional_relief, exposed_count = _additional_relief(build_additional_relief, rebuilt_rest, rebuilt_ways)
+            if exposed_count:
+                raised = additional_relief.translate((0, 0, bottom))
+                facets = tuple(_reconstructed_facets(paths, bottom, has_borders, raised, clip_ways=not has_borders))
+    else:
+        try:
+            facets = (
+                _solid_facets(paths[0].name, full.translate(offset), single_piece=True),
+                _solid_facets(rest_path.name, rest.translate(offset)),
+                _solid_facets(ways_path.name, _without_slivers(ways - rest).translate(offset)),
+            )
+        except ValueError:
+            if not blender_relief:
+                raise
+    if facets is None:
         facets = tuple(_reconstructed_facets(paths, bottom, has_borders, additional_relief))
     for path, data in zip(paths, facets):
         _write_stl(path, data)
