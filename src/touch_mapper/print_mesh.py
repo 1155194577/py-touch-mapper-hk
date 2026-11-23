@@ -196,24 +196,30 @@ def _without_slivers(solid):
 
 
 def _join_relief(parts):
-    body, *detached = sorted(parts, key=lambda part: part.volume(), reverse=True)
-    anchors = []
+    body = max(
+        (part for part in parts if abs(part.bounding_box()[2]) <= TOLERANCE_MM),
+        key=lambda part: part.volume(),
+        default=None,
+    )
+    if body is None:
+        raise _error("map.stl", "the base is not on the build plane")
+    kept = [body]
     feet = []
     bx0, by0, ground, bx1, by1, _ = body.bounding_box()
     base = ground + BASE_HEIGHT_MM
-    for part in detached:
-        if _is_sliver(part):
+    for part in parts:
+        if part is body or _is_sliver(part):
             continue
         x0, y0, bottom, x1, y1, top = part.bounding_box()
         if (part.volume() <= 0 or abs(bottom - base) > TOLERANCE_MM or top - bottom < BASE_JOIN_MM
                 or not (bx0 <= x0 <= x1 <= bx1 and by0 <= y0 <= y1 <= by1)):
             raise _error("map.stl", "relief is not attached to the base")
-        # Extend the foot into the base without changing the relief's roof height.
+        # Attach only the foot; both exports keep the original relief above it.
         stretch = (top - base + BASE_JOIN_MM) / (top - bottom)
         anchor = part.scale((1, 1, stretch)).translate((0, 0, top * (1 - stretch)))
-        anchors.append(anchor)
+        kept.append(part)
         feet.append(anchor.trim_by_plane((0, 0, -1), -(bottom + BASE_JOIN_MM)))
-    joined = Manifold.batch_boolean([body, *anchors], OpType.Add)
+    joined = Manifold.batch_boolean([*kept, *feet], OpType.Add)
     body, *detached = sorted(joined.decompose(), key=lambda part: part.volume(), reverse=True)
     if any(not _is_sliver(part) for part in detached):
         raise _error("map.stl", "relief is not attached to the base")

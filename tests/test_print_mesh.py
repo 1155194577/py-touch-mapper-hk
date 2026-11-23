@@ -111,6 +111,33 @@ class PrintMeshTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not attached to the base"):
             _join_relief((base + chip.translate((2, 3, 2))).decompose())
 
+    def test_single_and_split_exports_keep_the_same_sloped_relief(self):
+        base = Manifold.cube((20, 30, 0.6))
+        hill = Manifold.cylinder(2, 4, 2).translate((5, 5, 0.6005))
+        raw_stl(self.rest, base)
+        raw_stl(self.ways, hill)
+
+        finalize_stls(self.directory)
+
+        full, = _load_shells(self.full)
+        rest, = _load_shells(self.rest)
+        ways, = _load_shells(self.ways)
+        combined = rest + ways
+        self.assertLess((full - combined).volume() + (combined - full).volume(), 1e-4)
+
+    def test_joins_near_base_relief_larger_than_plate(self):
+        base = Manifold.cube((20, 30, 0.6))
+        relief = Manifold.cube((18, 28, 2)).translate((1, 1, 0.6005))
+        self.assertGreater(relief.volume(), base.volume())
+        raw_stl(self.rest, base, relief)
+        raw_stl(self.ways)
+
+        finalize_stls(self.directory)
+
+        full, = _load_shells(self.full)
+        self.assertAlmostEqual(full.bounding_box()[2], 0)
+        self.assertAlmostEqual(full.bounding_box()[5], 2.6005, places=6)
+
     def test_separates_vertices_that_coincide_in_float32(self):
         cube = Manifold.cube((10, 10, 1)).translate((180, 0, 0))
         mesh = cube.to_mesh64()
