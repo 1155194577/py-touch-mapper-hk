@@ -84,7 +84,7 @@ def _highest(size, cell, facet, heights):
     return out
 
 
-def _overlay(rest, ways, bottom):
+def _overlay(rest, ways, bottom, clip_ways):
     points = np.concatenate((rest, ways)).astype(np.float64)
     xy = points[:, :, :2]
     delta = xy[:, 1:] - xy[:, :1]
@@ -109,6 +109,9 @@ def _overlay(rest, ways, bottom):
     full = _highest(len(cells), cell, facet, heights)
     base = is_rest[facet]
     rest_top = _highest(len(cells), cell[base], facet[base], heights[base])
+    if clip_ways:
+        keep = (rest_top >= 0) | (full < 0)
+        cells, full, rest_top = cells[keep], full[keep], rest_top[keep]
     if not len(full) or (rest_top < 0).any():
         raise ValueError("relief is not fully supported by the base")
     xy, parent = _triangulate(cells)
@@ -273,9 +276,9 @@ class _Roof:
         return np.c_[b, a, np.full(len(a), center)]
 
 
-def reconstruct_relief(rest, ways, bottom):
+def reconstruct_relief(rest, ways, bottom, *, clip_ways=False):
     """Return an indexed full, rest and ways surface on a shared arrangement."""
-    xy, fields = _overlay(rest, ways, bottom)
+    xy, fields = _overlay(rest, ways, bottom, clip_ways)
     for _ in range(3):
         roof = _Roof(xy, fields)
         if not np.array_equal(roof.vertices, roof.vertices.astype(np.float32)):

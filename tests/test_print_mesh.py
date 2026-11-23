@@ -108,6 +108,23 @@ class PrintMeshTest(unittest.TestCase):
         self.assertAlmostEqual(full.bounding_box()[5], 2.61, delta=0.0001)
         self.assertAlmostEqual(rest.volume() + sum(part.volume() for part in ways), full.volume(), places=4)
 
+    def test_borderless_roof_repair_clips_attached_road_at_plate_edge(self):
+        base = Manifold.cube((20, 30, 0.6))
+        roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 3.47))
+        road = Manifold.cube((4, 2, 0.82)).translate((-1, 10, 0.59))
+        raw_stl(self.rest, base, roof)
+        raw_stl(self.ways, road)
+
+        finalize_stls(self.directory, blender_relief=True, blender_scale=2500)
+
+        full, = _load_shells(self.full)
+        rest, = _load_shells(self.rest)
+        ways, = _load_shells(self.ways)
+        np.testing.assert_allclose(ways.bounding_box()[:2] + ways.bounding_box()[3:5], (0, 10, 3, 12))
+        self.assertAlmostEqual(ways.slice(1).area(), 6)
+        self.assertAlmostEqual(rest.slice(2).area(), 12)
+        self.assertAlmostEqual(rest.volume() + ways.volume(), full.volume(), places=4)
+
     def test_blender_roof_repair_does_not_join_floating_ways_or_roofs_outside_plate(self):
         base = Manifold.cube((20, 30, 0.6))
         roof = Manifold.cube((4, 3, 0.04)).translate((4, 5, 3.47))

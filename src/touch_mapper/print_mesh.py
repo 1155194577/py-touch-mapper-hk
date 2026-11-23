@@ -302,7 +302,7 @@ def _restore_marker(paths, solids, marker):
     )
 
 
-def _reconstructed_facets(paths, bottom, has_borders, additional_relief):
+def _reconstructed_facets(paths, bottom, has_borders, additional_relief, *, clip_ways=False):
     try:
         rest, ways = (_read_triangles(path) for path in paths[1:])
         marker = None
@@ -311,7 +311,7 @@ def _reconstructed_facets(paths, bottom, has_borders, additional_relief):
         if additional_relief is not None and not additional_relief.is_empty():
             dots = additional_relief.to_mesh64()
             rest = np.concatenate((rest, dots.vert_properties[dots.tri_verts]))
-        vertices, surfaces = reconstruct_relief(rest, ways, bottom)
+        vertices, surfaces = reconstruct_relief(rest, ways, bottom, clip_ways=clip_ways)
     except (ValueError, GEOSException) as exc:
         raise _error(paths[0].name, str(exc)) from exc
     solids = tuple(_roof_solids(paths, vertices, surfaces))
@@ -389,7 +389,9 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             if not blender_relief:
                 raise
     if facets is None:
-        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, additional_relief))
+        facets = tuple(_reconstructed_facets(
+            paths, bottom, has_borders, additional_relief, clip_ways=reconstruct_roofs and not has_borders,
+        ))
     for path, data in zip(paths, facets):
         _write_stl(path, data)
     return exposed_count
