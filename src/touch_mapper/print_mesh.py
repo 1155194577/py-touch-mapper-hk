@@ -94,6 +94,12 @@ def _write_stl(path, solid, single_piece=False):
         facets.tofile(stl)
 
 
+def _trim_below_base(solid):
+    if not solid.is_empty() and solid.bounding_box()[2] < 0:
+        return solid.trim_by_plane((0, 0, 1), 0)
+    return solid
+
+
 def finalize_stls(directory: Path):
     rest_path, ways_path = (directory / name for name in ("map-rest.stl", "map-ways.stl"))
     rest = Manifold.batch_boolean(_load_shells(rest_path), OpType.Add)
@@ -102,6 +108,12 @@ def finalize_stls(directory: Path):
         raise _error(rest_path.name, "the map is missing a solid base")
     if ways.status() != Error.NoError:
         raise _error(ways_path.name, "the ways could not be joined")
+    # Blender puts the base at Z=0, but relief expansion can reach below it.
+    if rest.bounding_box()[2] < -TOLERANCE_MM or (
+        not ways.is_empty() and ways.bounding_box()[2] < -TOLERANCE_MM
+    ):
+        rest = _trim_below_base(rest)
+        ways = _trim_below_base(ways)
     full = rest + ways
     if full.status() != Error.NoError or full.is_empty():
         raise _error("map.stl", "solid assembly failed")

@@ -208,3 +208,24 @@ class RealEngineTest(unittest.TestCase):
             self.render(fixture, output, "--content-mode", "only-big-roads", scale=1400)
             self.assertEqual(len(_load_shells(output / "map.stl")), 1)
             self.assertTrue(_load_shells(output / "map-ways.stl"))
+
+    def test_close_up_building_keeps_base_flat(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            osm = root / "building.osm"
+            osm.write_text("""<osm version="0.6">
+                <bounds minlat="60" minlon="24" maxlat="60.00004" maxlon="24.00008"/>
+                <node id="1" version="1" lat="60.00001" lon="24.00002"/>
+                <node id="2" version="1" lat="60.00001" lon="24.00006"/>
+                <node id="3" version="1" lat="60.00003" lon="24.00006"/>
+                <node id="4" version="1" lat="60.00003" lon="24.00002"/>
+                <way id="5" version="1">
+                    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="1"/>
+                    <tag k="building" v="yes"/>
+                </way>
+            </osm>""")
+            output = root / "close-up"
+            self.render(osm, output, "--no-borders", scale=40)
+            solid, = _load_shells(output / "map.stl")
+            self.assertEqual(solid.bounding_box()[2], 0)
+            self.assertGreater(solid.bounding_box()[5], 2.9)
