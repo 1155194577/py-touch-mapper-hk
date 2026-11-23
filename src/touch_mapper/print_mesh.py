@@ -308,21 +308,7 @@ def _reconstructed_facets(paths, bottom, has_borders, additional_relief):
             yield _stl_facets(path.name, vertices[surface], solid.volume(), slot == 0)
 
 
-def _exposed_relief(relief, rest, ways):
-    if relief.status() != Error.NoError:
-        raise _error("map.stl", "invalid additional relief")
-    if relief.is_empty():
-        return relief, 0
-    top = relief.bounding_box()[5] - TOLERANCE_MM
-    occupied = rest.slice(top) + ways.slice(top)
-    exposed = [
-        dot for dot in relief.decompose()
-        if (dot.slice(top) - occupied).area() > TOLERANCE_MM ** 2
-    ]
-    return Manifold.compose(exposed), len(exposed)
-
-
-def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, additional_relief=None):
+def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, build_additional_relief=None):
     rest_path, ways_path = (directory / name for name in ("map-rest.stl", "map-ways.stl"))
     rest = Manifold.batch_boolean(_load_shells(rest_path, repair=True), OpType.Add)
     ways = Manifold.batch_boolean(_load_shells(ways_path, repair=True), OpType.Add)
@@ -330,9 +316,12 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, a
         raise _error(rest_path.name, "the map is missing a solid base")
     if ways.status() != Error.NoError:
         raise _error(ways_path.name, "the ways could not be joined")
+    additional_relief = None
     exposed_count = 0
-    if additional_relief is not None:
-        additional_relief, exposed_count = _exposed_relief(additional_relief, rest, ways)
+    if build_additional_relief is not None:
+        additional_relief, exposed_count = build_additional_relief(rest, ways)
+        if additional_relief.status() != Error.NoError:
+            raise _error("map.stl", "invalid additional relief")
         if exposed_count:
             rest += additional_relief
     # Blender puts the base at Z=0, but relief expansion can reach below it.

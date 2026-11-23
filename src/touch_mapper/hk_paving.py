@@ -13,9 +13,10 @@ from xml.etree.ElementTree import ParseError
 
 from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import fromstring
-from manifold3d import Manifold, OpType
+from manifold3d import Manifold
 
 from .osm import mercator_y
+from .print_mesh import TOLERANCE_MM
 
 
 SOURCE = "https://data.gov.hk/en-data/dataset/hk-td-tis_16-traffic-aids-drawings-v2/resource/2e2bbdac-c47e-4a4d-a40f-908639878bbe"
@@ -165,14 +166,13 @@ def _separate_centers(candidates):
         yield x, y
 
 
-def paving_relief(paths, bounds, scale, *, has_borders=False):
+def _paving_centers(paths, bounds, scale, has_borders):
     width, height = (span * 1000 / scale for span in bounds._span_meters())
     south = mercator_y(bounds.south)
     lon_span = bounds.east - bounds.west
     y_span = mercator_y(bounds.north) - south
     margin = DOT_RADIUS_MM + (BORDER_WIDTH_MM if has_borders else 0)
     corner_margin = 3 * BORDER_WIDTH_MM + DOT_RADIUS_MM
-    candidates = []
     for line in paths:
         points = [
             ((lon - bounds.west) / lon_span * width, (mercator_y(lat) - south) / y_span * height)
@@ -181,11 +181,21 @@ def paving_relief(paths, bounds, scale, *, has_borders=False):
         for run in _runs(points, width, height, margin):
             for x, y in _dot_centers(run):
                 if not has_borders or x < width - corner_margin or y < height - corner_margin:
-                    candidates.append((x, y))
+                    yield x, y
 
-    centers = list(_separate_centers(candidates))
+
+def _build_relief(candidates, rest, ways):
     dot = Manifold.cylinder(DOT_TOP_MM - DOT_BOTTOM_MM, DOT_RADIUS_MM, circular_segments=12)
-    relief = Manifold.batch_boolean(
-        [dot.translate((x, y, DOT_BOTTOM_MM)) for x, y in sorted(centers)], OpType.Add
+    top = DOT_TOP_MM - TOLERANCE_MM
+    footprint = dot.slice(top - DOT_BOTTOM_MM)
+    occupied = rest.slice(top) + ways.slice(top)
+    exposed = (
+        center for center in candidates
+        if (footprint.translate(center) - occupied).area() > TOLERANCE_MM ** 2
     )
-    return relief, len(centers)
+    centers = list(_separate_centers(exposed))
+    return Manifold.compose([dot.translate((x, y, DOT_BOTTOM_MM)) for x, y in centers]), len(centers)
+
+
+def paving_relief(paths, bounds, scale, rest, ways, *, has_borders=False):
+    return _build_relief(_paving_centers(paths, bounds, scale, has_borders), rest, ways)

@@ -1,12 +1,14 @@
 import struct
 import tempfile
 import unittest
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 from manifold3d import Manifold, Mesh64, OpType
 
+from touch_mapper.hk_paving import _build_relief
 from touch_mapper.print_mesh import _export_facets, _join_relief, _load_shells, _mesh, _stl_facets, finalize_stls
 
 
@@ -35,18 +37,17 @@ class PrintMeshTest(unittest.TestCase):
         building = Manifold.cube((3, 3, 3)).translate((1, 1, 0.5))
         raw_stl(self.rest, plate, building)
         raw_stl(self.ways)
-        dot = Manifold.cylinder(2.6, 0.85, circular_segments=12)
-        dots = Manifold.compose([dot.translate((x, x, 0.2)) for x in (2, 6)])
-        self.assertEqual(finalize_stls(self.directory, additional_relief=dots), 1)
+        dots = partial(_build_relief, [(2, 2), (6, 6)])
+        self.assertEqual(finalize_stls(self.directory, build_additional_relief=dots), 1)
         full, = _load_shells(self.full)
         self.assertAlmostEqual(full.volume(), 60 + 3 * 3 * 2.9 + 2.2 * 3 * 0.85 ** 2, places=4)
 
     def test_vector_repair_keeps_exposed_paving_in_full_and_rest_stls(self):
         raw_stl(self.rest, Manifold.cube((10, 10, 0.6)))
         raw_stl(self.ways, Manifold.cube((2, 8, 1.2)).translate((4, 1, 0.5)))
-        dot = Manifold.cylinder(2.6, 0.85, circular_segments=12).translate((5, 5, 0.2))
+        dot = partial(_build_relief, [(5, 5)])
         with patch("touch_mapper.print_mesh._solid_facets", side_effect=ValueError("unsafe STL")):
-            self.assertEqual(finalize_stls(self.directory, blender_relief=True, additional_relief=dot), 1)
+            self.assertEqual(finalize_stls(self.directory, blender_relief=True, build_additional_relief=dot), 1)
         full, = _load_shells(self.full)
         rest, = _load_shells(self.rest)
         for solid in (full, rest):

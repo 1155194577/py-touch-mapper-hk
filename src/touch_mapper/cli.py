@@ -4,6 +4,7 @@ import math
 import os
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from xml.etree.ElementTree import ParseError
 
@@ -120,13 +121,15 @@ def generate(runtime: Runtime, args):
             artifact = work / filename
             if not artifact.is_file() or not artifact.stat().st_size:
                 raise ValueError(f"converter did not produce {filename}")
-        paths = relief = None
+        paths = build_paving = None
         if args.hk_tactile_paving:
             paths = hk_paving.load_paths(bounds)
             if paths:
-                relief, _ = hk_paving.paving_relief(paths, bounds, args.scale, has_borders=not args.no_borders)
+                build_paving = partial(hk_paving.paving_relief, paths, bounds, args.scale, has_borders=not args.no_borders)
         print("Preparing printable STL solids", file=sys.stderr, flush=True)
-        dot_count = finalize_stls(work, blender_relief=True, has_borders=not args.no_borders, additional_relief=relief)
+        dot_count = finalize_stls(
+            work, blender_relief=True, has_borders=not args.no_borders, build_additional_relief=build_paving
+        )
         runtime.describe(work)
         runtime.embossing_pdf(work)
 

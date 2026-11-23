@@ -9,6 +9,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from manifold3d import Manifold
+
 from touch_mapper import hk_paving
 from touch_mapper.cli import main
 from touch_mapper.osm import Bounds
@@ -66,7 +68,7 @@ class HkPavingTest(unittest.TestCase):
             request.assert_not_called()
 
     def test_clips_crossing_path_even_without_an_in_bounds_vertex(self):
-        relief, count = hk_paving.paving_relief(LINES, BOUNDS, 1000)
+        relief, count = hk_paving.paving_relief(LINES, BOUNDS, 1000, Manifold(), Manifold())
         self.assertEqual(len(relief.decompose()), count)
         self.assertGreater(count, 1)
         west, south, bottom, east, north, top = relief.bounding_box()
@@ -91,12 +93,18 @@ class HkPavingTest(unittest.TestCase):
             for a, b in dots[:i]:
                 self.assertGreater((x - a) ** 2 + (y - b) ** 2, (2 * hk_paving.DOT_RADIUS_MM) ** 2)
 
+    def test_buried_candidate_does_not_displace_adjacent_visible_dot(self):
+        building = Manifold.cube((4, 3, 3)).translate((0, 3, 0.5))
+        relief, count = hk_paving._build_relief([(3, 4.5), (4.9, 4.5)], building, Manifold())
+        self.assertEqual(count, 1)
+        self.assertAlmostEqual(relief.bounding_box()[0], 4.9 - hk_paving.DOT_RADIUS_MM)
+
     def test_corner_only_path_is_free_of_marker_and_border_conflicts(self):
         paths = [[(114.20097, 22.400975), (114.20098, 22.40098)]]
-        relief, count = hk_paving.paving_relief(paths, BOUNDS, 1000, has_borders=True)
+        relief, count = hk_paving.paving_relief(paths, BOUNDS, 1000, Manifold(), Manifold(), has_borders=True)
         self.assertEqual(count, 0)
         self.assertTrue(relief.is_empty())
-        relief, count = hk_paving.paving_relief(paths, BOUNDS, 1000, has_borders=False)
+        relief, count = hk_paving.paving_relief(paths, BOUNDS, 1000, Manifold(), Manifold(), has_borders=False)
         self.assertEqual(count, 1)
         self.assertFalse(relief.is_empty())
 
