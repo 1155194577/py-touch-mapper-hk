@@ -329,9 +329,12 @@ def _restore_marker(paths, solids, marker):
     )
 
 
-def _reconstructed_facets(paths, bottom, has_borders, additional_relief, *, clip_ways=False):
+def _reconstructed_facets(paths, bottom, has_borders, additional_relief, *, clip_ways=False, removed=()):
     try:
         rest, ways = (_read_triangles(path) for path in paths[1:])
+        for x0, y0, z0, x1, y1, z1 in removed:
+            lo, hi = np.array((x0, y0, z0)) - TOLERANCE_MM, np.array((x1, y1, z1)) + TOLERANCE_MM
+            ways = ways[~((ways >= lo) & (ways <= hi)).all(axis=(1, 2))]
         marker = None
         if has_borders:
             rest, marker = _split_corner_top(rest, bottom)
@@ -404,8 +407,10 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             if full.status() != Error.NoError or full.is_empty():
                 raise _error("map.stl", "solid assembly failed")
             parts = full.decompose()
+    removed = []
     if len(parts) > 1 or reconstruct_roofs:
         parts, debris = _split_way_debris(parts, ways)
+        removed = [part.bounding_box() for part in debris]
         if debris:
             debris = Manifold.batch_boolean(debris, OpType.Add)
             rest, ways = rest - debris, ways - debris
@@ -421,7 +426,7 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
     paths = (directory / "map.stl", rest_path, ways_path)
     facets = None
     if reconstruct_roofs:
-        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, None, clip_ways=not has_borders))
+        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, None, clip_ways=not has_borders, removed=removed))
         if build_additional_relief is not None:
             rebuilt_rest, rebuilt_ways = (
                 _mesh(facets[slot]["vertices"], paths[slot].name) if len(facets[slot]) else Manifold()
@@ -430,7 +435,7 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             additional_relief, exposed_count = _additional_relief(build_additional_relief, rebuilt_rest, rebuilt_ways)
             if exposed_count:
                 raised = additional_relief.translate((0, 0, bottom))
-                facets = tuple(_reconstructed_facets(paths, bottom, has_borders, raised, clip_ways=not has_borders))
+                facets = tuple(_reconstructed_facets(paths, bottom, has_borders, raised, clip_ways=not has_borders, removed=removed))
     else:
         try:
             facets = (
@@ -442,7 +447,7 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             if not blender_relief:
                 raise
     if facets is None:
-        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, additional_relief))
+        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, additional_relief, removed=removed))
     for path, data in zip(paths, facets):
         _write_stl(path, data)
     return exposed_count
