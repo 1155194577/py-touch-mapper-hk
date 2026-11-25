@@ -47,14 +47,21 @@ def _district_border_mask(districts, xs, ys, land, step_m):
     ly, lx = np.where(land)
     points = shapely.points(xs[lx], ys[ly])
     radius = step_m * 0.7
+    boundaries = unary_union([poly.boundary for poly in polys]).buffer(radius)
+    shapely.prepare(boundaries)
+    on_boundary = shapely.contains(boundaries, points)
+
+    # Allow 2x query simplification offset so neighboring polygons simplified independently
+    # still register as adjacent across minor sliver gaps without thickening the ridge itself.
+    near_radius = radius + 2 * hk_terrain.DISTRICTS_SIMPLIFY_M
     counts = np.zeros(len(points), dtype=np.int16)
     for poly in polys:
-        buffered = poly.buffer(radius)
+        buffered = poly.buffer(near_radius)
         shapely.prepare(buffered)
         counts += shapely.contains(buffered, points)
 
     # A cell lies on an internal district boundary only where at least two districts meet.
-    hits = counts >= 2
+    hits = on_boundary & (counts >= 2)
     mask = np.zeros_like(land)
     mask[ly[hits], lx[hits]] = True
 

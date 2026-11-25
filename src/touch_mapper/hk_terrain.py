@@ -25,6 +25,7 @@ DISTRICTS_DATASET = "had_rcd_1634523272907_75218"
 DISTRICTS_SOURCE = f"https://portal.csdi.gov.hk/csdi-webpage/dataset/{DISTRICTS_DATASET}"
 DISTRICTS_SERVICE = f"https://portal.csdi.gov.hk/server/rest/services/common/{DISTRICTS_DATASET}/MapServer/0/query"
 DISTRICTS_ATTRIBUTION = "Home Affairs Department and CSDI Portal — District Council Districts (Hong Kong)"
+DISTRICTS_SIMPLIFY_M = 50
 CSDI_TERMS = "https://portal.csdi.gov.hk/csdi-webpage/doc/TNC"
 
 CACHE_AGE = 7 * 24 * 60 * 60
@@ -214,7 +215,7 @@ def _fetch_districts():
         "where": "1=1",
         "outFields": "OBJECTID,AREA_CODE,NAME_EN,NAME_TC,REGION",
         "outSR": 2326,
-        "maxAllowableOffset": 50,
+        "maxAllowableOffset": DISTRICTS_SIMPLIFY_M,
         "orderByFields": "OBJECTID ASC",
         "f": "json",
     })

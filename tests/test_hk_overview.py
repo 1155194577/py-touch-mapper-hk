@@ -164,6 +164,19 @@ class HkOverviewTest(unittest.TestCase):
         _, cols = np.where(mask)
         self.assertTrue(np.all(np.abs(dtm["xs"][cols] - 800300.0) <= 20.0))
 
+        # Two simplified districts separated by a small sliver (< 2 * DISTRICTS_SIMPLIFY_M) still form a ridge.
+        sliver = make_districts(width=600.0, height=450.0)
+        sliver["features"][0]["geometry"]["rings"][0] = [
+            [800000.0, 800000.0], [800280.0, 800000.0], [800280.0, 800450.0], [800000.0, 800450.0], [800000.0, 800000.0],
+        ]
+        sliver["features"][1]["geometry"]["rings"][0] = [
+            [800320.0, 800000.0], [800600.0, 800000.0], [800600.0, 800450.0], [800320.0, 800450.0], [800320.0, 800000.0],
+        ]
+        sliver_mask = _district_border_mask(sliver, dtm["xs"], dtm["ys"], land, dtm["step_m"])
+        self.assertGreater(int(sliver_mask.sum()), 0)
+        _, sliver_cols = np.where(sliver_mask)
+        self.assertTrue(np.all((dtm["xs"][sliver_cols] >= 800260.0) & (dtm["xs"][sliver_cols] <= 800340.0)))
+
     def test_cli_flags_disable_districts_and_borders_and_reject_bad_args(self):
         dtm = hk_terrain.parse_dtm_zip(make_dtm_zip(ncols=80, nrows=60, cellsize=5.0), step_m=10)
         with tempfile.TemporaryDirectory() as root:
