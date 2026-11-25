@@ -14,6 +14,8 @@ FACET = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute
 # Allow for the upstream converter's floating-point origin.
 TOLERANCE_MM = 0.001
 MAX_SEAM_SPAN_MM = 8
+# A larger hole is capped only when it is one flat vertical face above the base: a missing building wall.
+PLANAR_SEAM_MM = 0.001
 # Match the pinned engine's base height and overlap in tactile_constants.py.
 BASE_HEIGHT_MM = 0.6
 BASE_JOIN_MM = 0.01
@@ -23,6 +25,7 @@ CORNER_WIDTH_MM = 3 * 1.2
 CORNER_BOTTOM_MM = 2.2 * 0.99
 CORNER_TOP_MM = 3.9
 MAX_MICRO_VOID_MM3 = 0.005
+MAX_DEBRIS_MM3 = 0.06
 
 
 def _error(name, reason):
@@ -40,6 +43,13 @@ def _mesh(triangles, name):
     if solid.status() != Error.NoError:
         raise _error(name, "STL has an open or invalid surface")
     return solid
+
+
+def _is_wall(points, ground):
+    _, values, axes = np.linalg.svd(points - points.mean(axis=0))
+    flat = values[-1] <= PLANAR_SEAM_MM * math.sqrt(len(points))
+    raised = points[:, 2].min() >= ground + BASE_HEIGHT_MM - 2 * BASE_JOIN_MM
+    return flat and raised and abs(axes[-1, 2]) <= PLANAR_SEAM_MM
 
 
 def _repair_surface(path):
@@ -61,7 +71,8 @@ def _repair_surface(path):
             if vertex not in loop:
                 loop.add(vertex)
                 pending.extend(boundary.pop(vertex))
-        if np.linalg.norm(np.ptp(vertices[list(loop)], axis=0)) > MAX_SEAM_SPAN_MM:
+        points = vertices[list(loop)]
+        if np.linalg.norm(np.ptp(points, axis=0)) > MAX_SEAM_SPAN_MM and not _is_wall(points, vertices[:, 2].min()):
             raise _error(path.name, "STL has an open or invalid surface")
     # Cap local seams only; do not clean/remesh the rest of the surface.
     mesh.fill_small_boundaries(refine=False)
@@ -221,6 +232,21 @@ def _separate_blender_roofs(parts, ways, scale, building_height):
     return kept, len(kept) != len(parts)
 
 
+def _split_way_debris(parts, ways):
+    # Blender can leave sub-printable way fragments floating above the base.
+    body = _base_body(parts)
+    if body is None or ways.is_empty():
+        return parts, []
+    base = body.bounding_box()[2] + BASE_HEIGHT_MM
+    kept, debris = [], []
+    for part in parts:
+        floating = (part is not body and 0 < part.volume() < MAX_DEBRIS_MM3
+                    and part.bounding_box()[2] > base + TOLERANCE_MM
+                    and (part - ways).volume() < 0.01 * part.volume())
+        (debris if floating else kept).append(part)
+    return kept, debris
+
+
 def _join_relief(parts):
     body = _base_body(parts)
     if body is None:
@@ -230,7 +256,8 @@ def _join_relief(parts):
     bx0, by0, ground, bx1, by1, _ = body.bounding_box()
     base = ground + BASE_HEIGHT_MM
     for part in parts:
-        if part is body or _is_sliver(part):
+        # A negative shell bounds an enclosed void; filling it leaves the outer surface unchanged.
+        if part is body or _is_sliver(part) or part.volume() < 0:
             continue
         x0, y0, bottom, x1, y1, top = part.bounding_box()
         if (part.volume() <= 0 or abs(bottom - base) > TOLERANCE_MM or top - bottom < BASE_JOIN_MM
@@ -378,6 +405,10 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
                 raise _error("map.stl", "solid assembly failed")
             parts = full.decompose()
     if len(parts) > 1 or reconstruct_roofs:
+        parts, debris = _split_way_debris(parts, ways)
+        if debris:
+            debris = Manifold.batch_boolean(debris, OpType.Add)
+            rest, ways = rest - debris, ways - debris
         full, feet = _join_relief(parts)
         if feet:
             rest = Manifold.batch_boolean([rest, *feet], OpType.Add)
