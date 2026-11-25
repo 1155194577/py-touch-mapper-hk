@@ -122,7 +122,7 @@ def _overlay(rest, ways, bottom, clip_ways):
     return xy, np.stack((np.maximum(lower, upper), lower))
 
 
-def _separate_pinches(xy, fields, pinches):
+def _separate_pinches(xy, fields, pinches, fill=False):
     # At an X junction, two high sectors can touch along a vertical edge.
     # Break that contact in a sub-printable neighborhood, not across a facet.
     triangles = sh.polygons(xy)
@@ -131,9 +131,22 @@ def _separate_pinches(xy, fields, pinches):
     patch, hit = tree.query(rects, predicate="intersects")
     keep = np.ones(len(xy), dtype=bool)
     keep[hit] = False
-    cells = _cells(np.r_[sh.boundary(triangles[~keep]), sh.boundary(rects)])
+    # Node the kept neighbors too, so no cell spans the patch boundary.
+    near = np.unique(tree.query(triangles[~keep], predicate="intersects")[1])
+    cells = _cells(np.r_[sh.boundary(triangles[near]), sh.boundary(rects)])
     samples = sh.point_on_surface(cells)
     cell, source = tree.query(samples, predicate="within")
+    replaced = np.ones(len(cells), dtype=bool)
+    replaced[cell[keep[source]]] = False
+    cell, first = np.unique(cell, return_index=True)
+    source = source[first]
+    cell, source = cell[replaced[cell]], source[replaced[cell]]
+    # Snap rounding can fold a thin kept neighbor into a patch cell.
+    border = near[keep[near]]
+    a, b = sh.STRtree(cells[cell]).query(triangles[border], predicate="intersects")
+    covered = np.zeros(len(border))
+    np.add.at(covered, a, sh.area(sh.intersection(triangles[border[a]], cells[cell[b]])))
+    keep[border[covered > sh.area(triangles[border]) / 2]] = False
     cell_in_patch, patch_id = sh.STRtree(rects).query(samples, predicate="within")
     region = np.full(len(cells), -1)
     region[cell_in_patch] = patch_id
@@ -143,10 +156,11 @@ def _separate_pinches(xy, fields, pinches):
     corrected = []
     for field in fields:
         planes = _planes(xy[source], field[source])
-        minimum = np.full(len(rects), np.inf)
-        np.minimum.at(minimum, patch, field[hit].min(axis=1))
+        # Carve first; a contact that walks along a tapering gap is filled.
+        level = np.full(len(rects), -np.inf if fill else np.inf)
+        (np.maximum if fill else np.minimum).at(level, patch, field[hit].max(axis=1) if fill else field[hit].min(axis=1))
         planes[local, :2] = 0
-        planes[local, 2] = minimum[region[local]]
+        planes[local, 2] = level[region[local]]
         corrected.append(np.r_[field[keep], _evaluate(planes[parent], new_xy)])
     return np.r_[xy[keep], new_xy], np.stack(corrected)
 
@@ -279,7 +293,7 @@ class _Roof:
 def reconstruct_relief(rest, ways, bottom, *, clip_ways=False):
     """Return an indexed full, rest and ways surface on a shared arrangement."""
     xy, fields = _overlay(rest, ways, bottom, clip_ways)
-    for _ in range(3):
+    for attempt in range(6):
         roof = _Roof(xy, fields)
         if not np.array_equal(roof.vertices, roof.vertices.astype(np.float32)):
             raise ValueError("relief coordinates exceed exact STL precision")
@@ -293,6 +307,6 @@ def reconstruct_relief(rest, ways, bottom, *, clip_ways=False):
             pinches.extend(roof.vertices[edges[count > 2], :2].reshape(-1, 2))
         if not pinches:
             return roof.vertices, shells
-        xy, fields = _separate_pinches(xy, fields, np.unique(pinches, axis=0))
+        xy, fields = _separate_pinches(xy, fields, np.unique(pinches, axis=0), fill=attempt > 0)
         fields[0] = np.maximum(fields[0], fields[1])
     raise ValueError("relief has unresolved vertical edge contacts")

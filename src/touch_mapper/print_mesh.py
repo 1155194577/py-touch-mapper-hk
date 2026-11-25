@@ -14,6 +14,8 @@ FACET = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute
 # Allow for the upstream converter's floating-point origin.
 TOLERANCE_MM = 0.001
 MAX_SEAM_SPAN_MM = 8
+# A larger hole is capped only when it is a vertical strip standing on the base: missing building walls.
+PLANAR_SEAM_MM = 0.001
 # Match the pinned engine's base height and overlap in tactile_constants.py.
 BASE_HEIGHT_MM = 0.6
 BASE_JOIN_MM = 0.01
@@ -23,6 +25,8 @@ CORNER_WIDTH_MM = 3 * 1.2
 CORNER_BOTTOM_MM = 2.2 * 0.99
 CORNER_TOP_MM = 3.9
 MAX_MICRO_VOID_MM3 = 0.005
+MAX_DEBRIS_MM3 = 0.06
+RELIEF_NUDGES_MM = ((0, 0), (0.013, 0.007), (-0.011, 0.017), (0.019, -0.023))
 
 
 def _error(name, reason):
@@ -40,6 +44,13 @@ def _mesh(triangles, name):
     if solid.status() != Error.NoError:
         raise _error(name, "STL has an open or invalid surface")
     return solid
+
+
+def _is_wall(points, ground):
+    # Each corner of a missing strip of building wall appears at its foot and its top.
+    _, counts = np.unique(np.rint(points[:, :2] / PLANAR_SEAM_MM), axis=0, return_counts=True)
+    raised = points[:, 2].min() >= ground + BASE_HEIGHT_MM - 2 * BASE_JOIN_MM
+    return raised and (counts == 2).all()
 
 
 def _repair_surface(path):
@@ -61,14 +72,37 @@ def _repair_surface(path):
             if vertex not in loop:
                 loop.add(vertex)
                 pending.extend(boundary.pop(vertex))
-        if np.linalg.norm(np.ptp(vertices[list(loop)], axis=0)) > MAX_SEAM_SPAN_MM:
+        points = vertices[list(loop)]
+        if np.linalg.norm(np.ptp(points, axis=0)) > MAX_SEAM_SPAN_MM and not _is_wall(points, vertices[:, 2].min()):
             raise _error(path.name, "STL has an open or invalid surface")
     # Cap local seams only; do not clean/remesh the rest of the surface.
     mesh.fill_small_boundaries(refine=False)
-    if mesh.n_boundaries:
-        raise _error(path.name, "STL has an open or invalid surface")
     vertices, faces = mesh.return_arrays()
+    if mesh.n_boundaries:
+        faces = _cap_triangular_holes(faces)
+        if faces is None:
+            raise _error(path.name, "STL has an open or invalid surface")
     return Manifold(Mesh64(vertices, faces.astype(np.uint64)))
+
+
+def _cap_triangular_holes(faces):
+    # The filler can leave three-edge holes open; close each with one facet.
+    edges = np.stack((faces, faces[:, [1, 2, 0]]), axis=-1).reshape(-1, 2)
+    inner = {tuple(edge) for edge in edges}
+    following = {}
+    for start, end in edges:
+        if (end, start) not in inner:
+            if start in following:
+                return None
+            following[start] = end
+    caps = []
+    while following:
+        a, b = following.popitem()
+        c = following.pop(b, None)
+        if c is None or following.pop(c, None) != a:
+            return None
+        caps.append((a, c, b))
+    return np.r_[faces, np.array(caps, dtype=faces.dtype)]
 
 
 def _read_triangles(path):
@@ -221,6 +255,21 @@ def _separate_blender_roofs(parts, ways, scale, building_height):
     return kept, len(kept) != len(parts)
 
 
+def _split_way_debris(parts, ways):
+    # Blender can leave sub-printable way fragments floating above the base.
+    body = _base_body(parts)
+    if body is None or ways.is_empty():
+        return parts, []
+    base = body.bounding_box()[2] + BASE_HEIGHT_MM
+    kept, debris = [], []
+    for part in parts:
+        floating = (part is not body and 0 < part.volume() < MAX_DEBRIS_MM3
+                    and part.bounding_box()[2] > base + TOLERANCE_MM
+                    and (part - ways).volume() < 0.01 * part.volume())
+        (debris if floating else kept).append(part)
+    return kept, debris
+
+
 def _join_relief(parts):
     body = _base_body(parts)
     if body is None:
@@ -230,7 +279,8 @@ def _join_relief(parts):
     bx0, by0, ground, bx1, by1, _ = body.bounding_box()
     base = ground + BASE_HEIGHT_MM
     for part in parts:
-        if part is body or _is_sliver(part):
+        # A negative shell bounds an enclosed void; filling it leaves the outer surface unchanged.
+        if part is body or _is_sliver(part) or part.volume() < 0:
             continue
         x0, y0, bottom, x1, y1, top = part.bounding_box()
         if (part.volume() <= 0 or abs(bottom - base) > TOLERANCE_MM or top - bottom < BASE_JOIN_MM
@@ -302,9 +352,12 @@ def _restore_marker(paths, solids, marker):
     )
 
 
-def _reconstructed_facets(paths, bottom, has_borders, additional_relief, *, clip_ways=False):
+def _reconstructed_facets(paths, bottom, has_borders, additional_relief, *, clip_ways=False, removed=()):
     try:
         rest, ways = (_read_triangles(path) for path in paths[1:])
+        for x0, y0, z0, x1, y1, z1 in removed:
+            lo, hi = np.array((x0, y0, z0)) - TOLERANCE_MM, np.array((x1, y1, z1)) + TOLERANCE_MM
+            ways = ways[~((ways >= lo) & (ways <= hi)).all(axis=(1, 2))]
         marker = None
         if has_borders:
             rest, marker = _split_corner_top(rest, bottom)
@@ -377,7 +430,13 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             if full.status() != Error.NoError or full.is_empty():
                 raise _error("map.stl", "solid assembly failed")
             parts = full.decompose()
+    removed = []
     if len(parts) > 1 or reconstruct_roofs:
+        parts, debris = _split_way_debris(parts, ways)
+        removed = [part.bounding_box() for part in debris]
+        if debris:
+            debris = Manifold.batch_boolean(debris, OpType.Add)
+            rest, ways = rest - debris, ways - debris
         full, feet = _join_relief(parts)
         if feet:
             rest = Manifold.batch_boolean([rest, *feet], OpType.Add)
@@ -390,7 +449,7 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
     paths = (directory / "map.stl", rest_path, ways_path)
     facets = None
     if reconstruct_roofs:
-        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, None, clip_ways=not has_borders))
+        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, None, clip_ways=not has_borders, removed=removed))
         if build_additional_relief is not None:
             rebuilt_rest, rebuilt_ways = (
                 _mesh(facets[slot]["vertices"], paths[slot].name) if len(facets[slot]) else Manifold()
@@ -399,7 +458,17 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             additional_relief, exposed_count = _additional_relief(build_additional_relief, rebuilt_rest, rebuilt_ways)
             if exposed_count:
                 raised = additional_relief.translate((0, 0, bottom))
-                facets = tuple(_reconstructed_facets(paths, bottom, has_borders, raised, clip_ways=not has_borders))
+                for attempt, shift in enumerate(RELIEF_NUDGES_MM):
+                    # Relief edges that land almost on roof seams are nudged off them.
+                    try:
+                        facets = tuple(_reconstructed_facets(
+                            paths, bottom, has_borders, raised.translate((*shift, 0)),
+                            clip_ways=not has_borders, removed=removed,
+                        ))
+                        break
+                    except ValueError:
+                        if attempt == len(RELIEF_NUDGES_MM) - 1:
+                            raise
     else:
         try:
             facets = (
@@ -411,7 +480,7 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             if not blender_relief:
                 raise
     if facets is None:
-        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, additional_relief))
+        facets = tuple(_reconstructed_facets(paths, bottom, has_borders, additional_relief, removed=removed))
     for path, data in zip(paths, facets):
         _write_stl(path, data)
     return exposed_count
