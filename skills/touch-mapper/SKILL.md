@@ -83,6 +83,9 @@ touch-mapper generate --center 22.2835 114.1585 --width-cm 12 --height-cm 10 \
 # Online: WEST SOUTH EAST NORTH (lon, lat, lon, lat)
 touch-mapper generate --bbox 114.157 22.282 114.160 22.285 \
   --content-mode only-big-roads --scale 2400 --out-dir major-roads
+
+# Whole Hong Kong one-piece terrain + 18-district overview (no OSM/runtime needed)
+touch-mapper hk-overview --size-mm 210 --out-dir hk-overview
 ```
 
 If only the Docker image is available, mount the directory holding your OSM

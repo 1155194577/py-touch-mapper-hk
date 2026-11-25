@@ -61,6 +61,13 @@ def parser():
     indoor.add_argument("--floor", choices=(hkstp.FLOOR,), default=hkstp.FLOOR)
     indoor.add_argument("--size-mm", type=number, default=190, help="longest print side in mm (120–250, default: 190)")
     indoor.add_argument("-o", "--out-dir", type=Path, required=True, help="new directory for the floor map")
+    overview = commands.add_parser("hk-overview", help="make a one-piece whole Hong Kong tactile terrain overview STL")
+    overview.add_argument("--size-mm", type=number, default=210, help="longest print side in mm (120–250, default: 210)")
+    overview.add_argument("--relief-mm", type=number, default=8.0, help="maximum terrain relief in mm (2–20, default: 8)")
+    overview.add_argument("--step-m", type=int, default=250, help="DTM sampling step in metres, multiple of 5 (100–500, default: 250)")
+    overview.add_argument("--no-districts", action="store_true", help="omit raised 18-district boundary ridges on land")
+    overview.add_argument("--no-borders", action="store_true", help="omit the raised perimeter frame and north cue")
+    overview.add_argument("-o", "--out-dir", type=Path, required=True, help="new directory for the Hong Kong overview map")
     return root
 
 
@@ -212,6 +219,18 @@ def main(argv=None):
             from .floor_mesh import generate_floor
 
             print(json.dumps(generate_floor(args.out_dir, args.size_mm)))
+            return 0
+        if args.command == "hk-overview":
+            from .hk_overview_mesh import generate_overview
+
+            print(json.dumps(generate_overview(
+                args.out_dir,
+                size_mm=args.size_mm,
+                relief_mm=args.relief_mm,
+                step_m=args.step_m,
+                include_districts=not args.no_districts,
+                has_borders=not args.no_borders,
+            )))
             return 0
         if args.command == "generate":
             validate(args)

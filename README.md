@@ -151,6 +151,29 @@ Only this command downloads HKSTP data. The snapshot is cached for seven days
 under `$XDG_CACHE_HOME/touch-mapper` (default `~/.cache/touch-mapper`); on a failed
 request the CLI uses the last valid snapshot with a warning, if one exists.
 
+### Whole Hong Kong tactile terrain overview
+
+The optional `hk-overview` command makes a one-piece 3D tactile terrain map of
+all of Hong Kong from the Lands Department
+[5 m Digital Terrain Model](https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5m-grid-dtm)
+and the Home Affairs Department
+[18 District Council Districts](https://portal.csdi.gov.hk/csdi-webpage/dataset/had_rcd_1634523272907_75218)
+layer on CSDI. It does not use OSM or need the upstream Touch Mapper runtime.
+
+```sh
+touch-mapper hk-overview --size-mm 210 --out-dir hk-overview
+```
+
+It writes a single watertight `map.stl` (north up, 210 × 157 mm by default to
+fit a 220 × 220 mm printer bed), an accessible `legend.md`, and `manifest.json`.
+Sea sits on a flat 1.6 mm base, land rises with a crisp 1.0 mm coastline step
+plus real elevation relief (default 8 mm up to Tai Mo Shan), and internal land
+borders between the 18 districts appear as narrow raised ridges (`--no-districts`
+omits them). A raised perimeter frame and top-center bar mark north-up
+orientation (`--no-borders` omits them). Both datasets are cached for seven days
+under `$XDG_CACHE_HOME/touch-mapper`; on a network outage, cached snapshots are
+reused with a warning.
+
 ## Outputs
 
 | Output | Use |
