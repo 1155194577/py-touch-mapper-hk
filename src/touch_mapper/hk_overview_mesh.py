@@ -41,16 +41,20 @@ def _district_border_mask(districts, xs, ys, land, step_m):
         parts = [Polygon(ring) for ring in rings if len(ring) >= 4]
         if parts:
             polys.append(unary_union(parts).buffer(0))
-    if not polys:
+    if len(polys) < 2:
         return np.zeros_like(land)
-
-    boundaries = unary_union([poly.boundary for poly in polys])
-    buffered = boundaries.buffer(step_m * 0.7)
-    shapely.prepare(buffered)
 
     ly, lx = np.where(land)
     points = shapely.points(xs[lx], ys[ly])
-    hits = shapely.contains(buffered, points)
+    radius = step_m * 0.7
+    counts = np.zeros(len(points), dtype=np.int16)
+    for poly in polys:
+        buffered = poly.buffer(radius)
+        shapely.prepare(buffered)
+        counts += shapely.contains(buffered, points)
+
+    # A cell lies on an internal district boundary only where at least two districts meet.
+    hits = counts >= 2
     mask = np.zeros_like(land)
     mask[ly[hits], lx[hits]] = True
 

@@ -13,7 +13,7 @@ import numpy as np
 
 from touch_mapper import hk_terrain
 from touch_mapper.cli import main
-from touch_mapper.hk_overview_mesh import FILES
+from touch_mapper.hk_overview_mesh import FILES, _district_border_mask
 from touch_mapper.print_mesh import _load_shells
 
 
@@ -149,6 +149,20 @@ class HkOverviewTest(unittest.TestCase):
             self.assertIn("Hong Kong — Tactile Terrain Overview", legend)
             self.assertIn("West Test District", legend)
             self.assertIn("North-up orientation cue", legend)
+
+    def test_district_border_mask_excludes_external_territorial_border(self):
+        dtm = hk_terrain.parse_dtm_zip(make_dtm_zip(ncols=120, nrows=90, cellsize=5.0), step_m=10)
+        land = dtm["grid"] > 0
+        # Single district covering the left half only: no second district meets its edges.
+        single = {"fetchedAt": "2026-11-25T00:00:00+00:00", "features": [make_districts(width=600.0, height=450.0)["features"][0]]}
+        self.assertEqual(int(_district_border_mask(single, dtm["xs"], dtm["ys"], land, dtm["step_m"]).sum()), 0)
+
+        # Two adjacent districts: only cells near the shared seam (x ≈ 800300) are marked, not the outer edges.
+        pair = make_districts(width=600.0, height=450.0)
+        mask = _district_border_mask(pair, dtm["xs"], dtm["ys"], land, dtm["step_m"])
+        self.assertGreater(int(mask.sum()), 0)
+        _, cols = np.where(mask)
+        self.assertTrue(np.all(np.abs(dtm["xs"][cols] - 800300.0) <= 20.0))
 
     def test_cli_flags_disable_districts_and_borders_and_reject_bad_args(self):
         dtm = hk_terrain.parse_dtm_zip(make_dtm_zip(ncols=80, nrows=60, cellsize=5.0), step_m=10)
