@@ -47,6 +47,7 @@ def parser():
     generate.add_argument("--content-mode", choices=MODES, default="normal")
     generate.add_argument("--road-density", type=number, help="major road retention, 1–100 (default: 10)")
     generate.add_argument("--hk-tactile-paving", action="store_true", help="add Hong Kong tactile guide paths to STLs")
+    generate.add_argument("--hk-poi", action="store_true", help="add numbered OpenStreetMap points of interest to STLs")
     generate.add_argument("--hkstp-landmarks", action="store_true", help="add numbered Science Park landmarks to STLs")
     generate.add_argument("--no-borders", action="store_true", help="omit the raised map borders")
     markers = generate.add_mutually_exclusive_group()
@@ -162,6 +163,21 @@ def generate(runtime: Runtime, args):
                     combined = paving + landmarks if dot_count else landmarks
                     return combined, dot_count + len(items)
 
+        pois = []
+        if args.hk_poi:
+            from . import hk_poi
+
+            poi_groups, poi_skipped = hk_poi.select(hk_poi.load(osm), bounds)
+            if poi_groups:
+                build_inner = build_relief
+
+                def build_relief(rest, ways):
+                    inner, inner_count = build_inner(rest, ways) if build_inner else (None, 0)
+                    occupied = rest + inner if inner_count else rest
+                    markers, items = hk_poi.build_relief(poi_groups, bounds, args.scale, occupied, ways)
+                    pois.extend(items)
+                    return (inner + markers if inner_count else markers), inner_count + len(items)
+
         print("Preparing printable STL solids", file=sys.stderr, flush=True)
         relief_count = finalize_stls(
             work, blender_relief=True, has_borders=not args.no_borders, build_additional_relief=build_relief,
@@ -192,7 +208,7 @@ def generate(runtime: Runtime, args):
             "attribution": ATTRIBUTION,
         }
         if args.hk_tactile_paving:
-            dot_count = relief_count - len(placed) if args.hkstp_landmarks else relief_count
+            dot_count = relief_count - len(pois) - (len(placed) if args.hkstp_landmarks else 0)
             status = "unavailable" if paths is None else "included" if dot_count else "no-data"
             manifest["hkTactilePaving"] = {
                 "status": status,
@@ -205,6 +221,11 @@ def generate(runtime: Runtime, args):
             (result / legend_file).write_text(legend, encoding="utf-8")
             manifest["files"].append(legend_file)
             manifest["hkstpLandmarks"] = landmarks_report
+        if args.hk_poi:
+            poi_report = hk_poi.report(poi_groups, poi_skipped, pois)
+            (result / "points-of-interest.md").write_text(hk_poi.legend(poi_report), encoding="utf-8")
+            manifest["files"].append("points-of-interest.md")
+            manifest["hkPoi"] = poi_report
         (result / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         if output.exists() or output.is_symlink():
             raise ValueError(f"output directory already exists: {output}")

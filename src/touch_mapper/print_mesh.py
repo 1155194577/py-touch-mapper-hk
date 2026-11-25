@@ -14,7 +14,7 @@ FACET = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute
 # Allow for the upstream converter's floating-point origin.
 TOLERANCE_MM = 0.001
 MAX_SEAM_SPAN_MM = 8
-# A larger hole is capped only when it is one flat vertical face above the base: a missing building wall.
+# A larger hole is capped only when it is a vertical strip standing on the base: missing building walls.
 PLANAR_SEAM_MM = 0.001
 # Match the pinned engine's base height and overlap in tactile_constants.py.
 BASE_HEIGHT_MM = 0.6
@@ -46,10 +46,10 @@ def _mesh(triangles, name):
 
 
 def _is_wall(points, ground):
-    _, values, axes = np.linalg.svd(points - points.mean(axis=0))
-    flat = values[-1] <= PLANAR_SEAM_MM * math.sqrt(len(points))
+    # Each corner of a missing strip of building wall appears at its foot and its top.
+    _, counts = np.unique(np.rint(points[:, :2] / PLANAR_SEAM_MM), axis=0, return_counts=True)
     raised = points[:, 2].min() >= ground + BASE_HEIGHT_MM - 2 * BASE_JOIN_MM
-    return flat and raised and abs(axes[-1, 2]) <= PLANAR_SEAM_MM
+    return raised and (counts == 2).all()
 
 
 def _repair_surface(path):
@@ -76,10 +76,32 @@ def _repair_surface(path):
             raise _error(path.name, "STL has an open or invalid surface")
     # Cap local seams only; do not clean/remesh the rest of the surface.
     mesh.fill_small_boundaries(refine=False)
-    if mesh.n_boundaries:
-        raise _error(path.name, "STL has an open or invalid surface")
     vertices, faces = mesh.return_arrays()
+    if mesh.n_boundaries:
+        faces = _cap_triangular_holes(faces)
+        if faces is None:
+            raise _error(path.name, "STL has an open or invalid surface")
     return Manifold(Mesh64(vertices, faces.astype(np.uint64)))
+
+
+def _cap_triangular_holes(faces):
+    # The filler can leave three-edge holes open; close each with one facet.
+    edges = np.stack((faces, faces[:, [1, 2, 0]]), axis=-1).reshape(-1, 2)
+    inner = {tuple(edge) for edge in edges}
+    following = {}
+    for start, end in edges:
+        if (end, start) not in inner:
+            if start in following:
+                return None
+            following[start] = end
+    caps = []
+    while following:
+        a, b = following.popitem()
+        c = following.pop(b, None)
+        if c is None or following.pop(c, None) != a:
+            return None
+        caps.append((a, c, b))
+    return np.r_[faces, np.array(caps, dtype=faces.dtype)]
 
 
 def _read_triangles(path):
