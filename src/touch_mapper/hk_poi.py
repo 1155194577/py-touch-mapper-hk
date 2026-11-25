@@ -165,8 +165,12 @@ def build_relief(groups, bounds, scale, rest, ways):
                 spot = (*here, PLAQUE_BOTTOM_MM, "ground")
                 break
             if roofs.contains(outline.buffer(-GAP_MM)):
-                spot = (*here, top_under(outline) - ROOF_SINK_MM, "roof")
-                break
+                # Sample only under the plaque, and only where the roof is level.
+                below = rest ^ _forms(number)[kind].extrude(50).translate((*xy, 0))
+                top = below.bounding_box()[5]
+                if below.volume() >= 0.98 * _forms(number)[kind].area() * top:
+                    spot = (*here, top - ROOF_SINK_MM, "roof")
+                    break
         # No open space nearby: stand the plaque on a solid column over the roads.
         # A station must be marked, so its column may stand over the fewest buildings.
         spot = spot or column or least
