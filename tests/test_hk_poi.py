@@ -4,9 +4,11 @@ from pathlib import Path
 
 import numpy as np
 
+from manifold3d import Manifold
+
 from touch_mapper import hk_poi
 from touch_mapper.osm import Bounds
-from touch_mapper.print_mesh import _is_wall
+from touch_mapper.print_mesh import _cap_triangular_holes, _is_wall
 
 
 OSM = """<?xml version="1.0"?>
@@ -53,12 +55,36 @@ class PoiTest(unittest.TestCase):
         self.assertIn(hk_poi.ATTRIBUTION, hk_poi.legend(data))
 
 
+    def test_places_marker_on_ground_roof_or_column_over_roads(self):
+        bounds = Bounds(114.15, 22.33, 114.151, 22.331)
+        width, height = (span * 1000 / 1000 for span in bounds._span_meters())
+        plate = Manifold.cube((width, height, 0.6))
+        anchor = ((114.1505, 22.3305),)
+        group = {("station:A", "entrance"): [("A", anchor[0])]}
+        _, placed = hk_poi.build_relief(group, bounds, 1000, plate, Manifold())
+        self.assertEqual(placed[0]["mount"], "ground")
+        roads = Manifold.cube((width, height, 1.5)).translate((0, 0, 0.6))
+        relief, placed = hk_poi.build_relief(group, bounds, 1000, plate, roads)
+        self.assertEqual((placed[0]["mount"], placed[0]["shiftMm"]), ("column", 0.0))
+        self.assertGreater(relief.bounding_box()[5], 2.1 + 1)
+        towers = plate + Manifold.cube((width, height, 3.5))
+        self.assertEqual(hk_poi.build_relief(group, bounds, 1000, towers, Manifold())[1][0]["mount"], "roof")
+
+
 class WallSeamTest(unittest.TestCase):
     def test_accepts_only_wall_strips_standing_on_the_base(self):
         bent = np.array([(x, y, z) for x, y in ((0, 0), (5, 1), (9, 0)) for z in (0.59, 3.49)])
         self.assertTrue(_is_wall(bent, 0))
         self.assertFalse(_is_wall(bent - (0, 0, 0.59), 0))
         self.assertFalse(_is_wall(np.array([(0, 0, 0.6), (20, 0, 0.6), (20, 30, 0.6)]), 0))
+
+
+    def test_caps_three_edge_holes_only(self):
+        cube = Manifold.cube((1, 1, 1)).to_mesh()
+        faces = np.asarray(cube.tri_verts)
+        capped = _cap_triangular_holes(faces[1:])
+        self.assertEqual(len(capped), len(faces))
+        self.assertIsNone(_cap_triangular_holes(faces[2:]))
 
 
 if __name__ == "__main__":

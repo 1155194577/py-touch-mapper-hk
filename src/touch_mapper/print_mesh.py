@@ -26,6 +26,7 @@ CORNER_BOTTOM_MM = 2.2 * 0.99
 CORNER_TOP_MM = 3.9
 MAX_MICRO_VOID_MM3 = 0.005
 MAX_DEBRIS_MM3 = 0.06
+RELIEF_NUDGES_MM = ((0, 0), (0.013, 0.007), (-0.011, 0.017), (0.019, -0.023))
 
 
 def _error(name, reason):
@@ -457,7 +458,17 @@ def finalize_stls(directory: Path, *, blender_relief=False, has_borders=False, b
             additional_relief, exposed_count = _additional_relief(build_additional_relief, rebuilt_rest, rebuilt_ways)
             if exposed_count:
                 raised = additional_relief.translate((0, 0, bottom))
-                facets = tuple(_reconstructed_facets(paths, bottom, has_borders, raised, clip_ways=not has_borders, removed=removed))
+                for attempt, shift in enumerate(RELIEF_NUDGES_MM):
+                    # Relief edges that land almost on roof seams are nudged off them.
+                    try:
+                        facets = tuple(_reconstructed_facets(
+                            paths, bottom, has_borders, raised.translate((*shift, 0)),
+                            clip_ways=not has_borders, removed=removed,
+                        ))
+                        break
+                    except ValueError:
+                        if attempt == len(RELIEF_NUDGES_MM) - 1:
+                            raise
     else:
         try:
             facets = (
