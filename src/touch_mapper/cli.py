@@ -131,6 +131,12 @@ def generate(runtime: Runtime, args):
         check_dimensions(dimensions)
         marker_point = None if args.hide_marker else args.marker or args.center
         marker = json.dumps(bounds.marker(*marker_point, args.scale)) if marker_point else None
+        # Read POIs before road-only pruning drops their standalone nodes.
+        poi_features = None
+        if args.hk_poi:
+            from . import hk_poi
+
+            poi_features = hk_poi.load(osm)
         if args.content_mode in {"only-big-roads", "only-named-roads"}:
             runtime.prune(osm, bounds, dimensions, args)
         runtime.convert(osm, dimensions, marker, args)
@@ -165,9 +171,7 @@ def generate(runtime: Runtime, args):
 
         pois = []
         if args.hk_poi:
-            from . import hk_poi
-
-            poi_groups, poi_skipped = hk_poi.select(hk_poi.load(osm), bounds)
+            poi_groups, poi_skipped = hk_poi.select(poi_features, bounds)
             if poi_groups:
                 build_inner = build_relief
 
